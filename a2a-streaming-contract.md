@@ -941,9 +941,51 @@ routing → retrieval → planning → generation → execution → validation
 
 所以如果我方发 delta 而它转发：**未经 `PolicyStreamGuard` 的文本会直接落到用户可见流上**，守卫设计当场失效。我方的输出在它的架构里本来就不该走展示通道。
 
-这条与"技术上能不能做"无关——`transport.py` 已有 `chat_stream`，对话路径技术上完全可以流式。**能做但不做。**
+> **以上这段论证已由 §7.2 取代**（它依赖的第二条前提是错的）。**结论不变**，
+> 重新论证见下节。这里保留原文是为了让"哪一版靠什么理由得出的结论"可追溯。
 
-推论，一并钉死：**终态事件之前的任何事件都不含答案内容。** 进度事件只有 stage 标签和展示文案，artifact 一次性给全。任何未来想在终态前塞答案片段的改动，都要先回来推翻本节。
+推论，一并钉死：**终态事件之前的任何事件都不含答案内容。** 进度事件只有 stage 标签和展示文案，artifact 一次性给全。任何未来想在终态前塞答案片段的改动，都要先回来推翻本节与 §7.2。
+
+### 7.2 delta 结论的重新论证（v1.5）
+
+§7.1 的结论——**永久不做 delta**——**保留**。但它原来的论证站在一条错的前提上
+（"我方结果不进 prompt 正文"），所以整段重新写一遍。**先说结论为什么不受影响，
+再说前提改了之后论证怎么走。**
+
+#### 为什么"两个都进"不推翻结论
+
+原论证是：*我方结果不进展示通道 → 所以我方也不该往展示通道发东西。*
+真实情况是我方结果**同时**进 prompt 正文和 `grounding_sources`。
+关键在于：**这两个都是 LLM 的输入侧，没有一个是展示侧。**
+
+调用方的用户可见流只有一个入口——它自己 LLM 的输出，逐句过 `PolicyStreamGuard`
+（`ai-helpdesk/backend/core/answer_policy.py:440`），由编排器消费
+（`backend/agents/agent_orchestrator.py:344`、`:380`）。我方的文本无论进 prompt
+还是进 sources，**都要先穿过一次它自己的生成，才可能被用户看见**。
+
+所以正确的论证是：
+
+> **我方的输出在调用方的架构里只有输入侧的位置，没有输出侧的位置。**
+> delta 是一种**为了直通展示而存在**的东西——它唯一的价值就是"边生成边给人看"。
+> 一段必须先进 prompt、等对方 LLM 重新组织过才能见人的文本，做成增量没有任何收益：
+> 调用方要么攒齐了再用（那 delta 白发），要么真的转发（那就绕过了守卫）。
+
+**前提改了，结论反而更硬。** 原前提（"只进 sources"）暗示我方文本在调用方那边
+用途很窄，"不该展示"像是一条局部约定；查实之后知道它**同时是 prompt 正文**——
+也就是说它是喂给对方模型的原料。原料被直接播给用户，比原来设想的更离谱。
+
+#### 结论保留，但有一条边界要写清楚
+
+原文"我方的输出在它的架构里本来就不该走展示通道"这句**仍然成立**，
+只是理由换了：不是因为它去了 sources，而是因为**调用方的展示通道只接自己 LLM 的输出**。
+
+同时补一条 v1.4 之前没人说过的话：**这个结论依赖调用方的架构，不依赖 A2A 协议。**
+哪天调用方改成"把委派结果直接展示给用户"（比如做一个"数据原文"折叠区），
+本节的论证就整段失效——那时该重新讨论，而不是发现"反正也没人转发"就默默加上。
+**要推翻本节，先推翻的是「调用方的展示通道只接自己 LLM 的输出」这句话，
+不是「delta 技术上能不能做」。**
+
+`transport.py` 已有 `chat_stream`，对话路径技术上完全可以流式。**能做但不做**，这一条不变。
 
 ---
 
@@ -951,19 +993,43 @@ routing → retrieval → planning → generation → execution → validation
 
 对齐通过后按此执行。**本文档不含实现，以下只是范围界定。**
 
-### 8.1 措辞：三处"秒级同步"的说法要改
+### 8.1 措辞（v1.5 按现状重写）
 
-这三处现在都在明说"不做流式"，翻 `streaming:true` 之前必须一起改，否则文档和 Card 自相矛盾：
-
-| 位置 | 现在的话 |
-| --- | --- |
-| `ai_sql_a2a/__init__.py:14-15` | 「不做 message/stream、tasks/cancel、push notifications：一次订单查询是**秒级同步**操作，为它建流式通道和回调机制是把协议表面积当成目标本身。」 |
-| `README.md:179` | 「Streaming and push notifications are declared unsupported in the Card; **a lookup is a synchronous, seconds-scale call** and the protocol surface stays that small on purpose.」 |
-| `README.zh-CN.md:179` | 「Card 里如实声明不支持流式和推送：一次查询是**秒级同步调用**，协议表面积刻意只有这么大。」 |
-
-> 你只点了前两处，第三处是中文 README 的镜像段落，同一句话的翻译；两个 README 是互译关系，漏改一个就会出现"英文说支持、中文说不支持"。一并列出。
+> **这一节从 v1.0 到 v1.4 一直挂着三条引文，而那三段话从来没进过任何提交。**
+> v1.3 已经指出过（"§8.1 引用的原文从未进过任何提交——契约是对着一个远端没有的版本写的"），
+> 但只写在变更记录里，条目本身没动，于是 v1.4 又照原样传了一版。
+> v1.5 把它按现状改掉。
 >
-> 改写方向：不是简单删掉，而是换成**为什么现在做了**——p90 17.7s 的实测数据（§2）就是那个"原来的判断哪里错了"。`tasks/cancel` / push notifications 依然不做，那部分理由仍然成立，要保留。
+> 复核命令（2026-04-28，均无输出）：
+>
+> ```bash
+> cd ai-sql-agent
+> git log --oneline -S"秒级同步"   -- README.zh-CN.md ai_sql_a2a/__init__.py
+> git log --oneline -S"seconds-scale"
+> ```
+
+**现状（2026-04-28 实测）：**
+
+| 位置 | 现在是什么 | 还要不要改 |
+| --- | --- | --- |
+| `ai_sql_a2a/__init__.py` | 已无"秒级同步"的说法。现在写的是「本包实现 `message/send` 与 `message/stream`；`tasks/cancel`、`tasks/resubscribe`、push notifications 刻意不做（契约 §7）」 | ✅ 不用改（但引用的契约版本要更新，见下） |
+| `README.md` | **完全没有提到 A2A 或流式**——`grep -ci stream README.md` → `0`，`grep -ci a2a README.md` → `0` | ⚠️ 要补 |
+| `README.zh-CN.md` | 同上，`grep -ci 流式 README.zh-CN.md` → `0` | ⚠️ 要补 |
+
+**所以剩下的不是"改口径"，是"README 里根本没有这块"。** 建议按 §2 的实测数据补一段
+（"原来判断它是秒级同步操作，p90 17.7s 的实测推翻了这个判断"），
+并明确保留 `tasks/cancel` / push notifications 不做的理由——那部分理由今天仍然成立。
+两个 README 是互译关系，**必须同时补**，否则会出现"英文说支持、中文没提"。
+
+**另外，两侧代码里引用的契约版本都过期了**（附录 B 要求"引用时带上 commit"）：
+
+| 位置 | 现在引的 | 应该引 |
+| --- | --- | --- |
+| `ai-sql-agent/ai_sql_a2a/__init__.py:4` | 「（v1.3）」 | `v1.5` + tag/commit |
+| `ai-sql-agent/tests/test_a2a_server.py:2` | 「（v1.3）」 | 同上 |
+| `ai-sql-agent/ai_sql_core/settings.py:189` | 「契约 v1.3」 | 同上 |
+| `ai-helpdesk/backend/tools/a2a_client.py:4` | 「（v1.3）」 | 同上 |
+| `ai-helpdesk/backend/tools/sql_agent_client.py:9` | commit `9081030`（= **v1.2**） | 同上 |
 
 ### 8.2 代码
 
@@ -987,11 +1053,68 @@ routing → retrieval → planning → generation → execution → validation
 
 ### 8.4 容量（不改代码，但要知道）
 
-`/query` 是同步 `def`，跑在 anyio 默认 **40** 线程的线程池里。一次查库 17.7s 就占住一个线程 17.7s → **单副本约 2.3 QPS 上限**。流式期间还额外占住一条 HTTP 连接。当前默认限流是 60 次/分/调用方（1 QPS），**3 个调用方跑满就能占满线程池**。这条今天就成立，流式让连接也一起占住，压测时按这个算。
+> **v1.5 修正：下面的 2.3 QPS 是推算，不是实测；而且它只管 `/query`，不管 A2A。**
+> 原文把它写得像一个测出来的系统上限，两处都不准。
 
-> **2.3 QPS 是单副本的数字，不是硬上限。** 共享限流/熔断（`ai_sql_core/shared_state.py`）落地之后多副本才第一次真的能起——`docker compose up -d --scale app=2`，或 K8s 加 replica。**多副本是这个数字的缓解手段**：限流与熔断走 Redis 共用一份，副本数乘上去就是吞吐乘上去。
+**先说 `/query`（这条路上原来的数字是对的，但要标清楚它是怎么来的）：**
+
+`/query` 是同步 `def`（`ai_sql_api/app.py:461`），FastAPI 会把它丢进 **anyio 的默认线程池**。
+那个池子的容量是 **40**，可实测：
+
+```bash
+cd ai-sql-agent && .venv/bin/python -c '
+import anyio.to_thread, asyncio
+async def m(): print(anyio.to_thread.current_default_thread_limiter().total_tokens)
+asyncio.run(m())'
+# → 40.0
+```
+
+一次查库 17.7s 占住一个线程 17.7s，**40 ÷ 17.7 ≈ 2.3**——这是一次**除法**，
+不是一次压测。它假设每次查询都恰好 17.7s（实际 p50 6.6s、max 68.3s，§2）、
+线程池百分百有效利用、没有别的同步端点抢线程。**真要一个能写进容量规划的数，得压测。**
+
+**再说 A2A（原文完全没提，而这是流式实际走的路）：**
+
+`message/send` 与 `message/stream` 的 handler 都是 `async def`，pipeline 经
+`asyncio.to_thread` 下沉（`ai_sql_a2a/server.py:271`、`:303`）。
+**`asyncio.to_thread` 走的不是 anyio 那个 40 线程池**，而是事件循环的默认
+`ThreadPoolExecutor`，容量是 `min(32, os.cpu_count() + 4)`——**跟机器走**。
+在写这段时那台 12 核开发机上是 **16**：
+
+```bash
+python3 -c 'import os; print(min(32, (os.cpu_count() or 1) + 4), os.cpu_count())'
+# → 16 12
+```
+
+而且流式路径**每条在飞的流占两个线程**：一个跑 pipeline，一个阻塞在
+`loop.run_in_executor(None, events.get)` 上等事件（`ai_sql_a2a/server.py:312`）。
+
+| 路径 | 线程池 | 该池容量 | 每请求占用 | 同时在飞的上限 |
+| --- | --- | --- | --- | --- |
+| `/query` | anyio 默认 | 40（实测） | 1 | 40 |
+| `message/send` | asyncio 默认 executor | `min(32, cpu+4)`（12 核机上 = 16） | 1 | 16 |
+| `message/stream` | 同上 | 同上 | **2** | **8** |
+
+**含义：流式路径的并发上限比 `/query` 低得多，而且随机器核数变。**
+按 17.7s 算，12 核机上流式约 **0.45 QPS**，`/query` 约 **2.3 QPS**——差五倍。
+压测和容量规划**必须分路径做**，不能拿 `/query` 的数字替 A2A 背书。
+
+当前默认限流是 60 次/分/调用方（`ai_sql_core/settings.py:199`，1 QPS），
+**一个调用方跑满就能压垮流式路径**——这一条 v1.4 之前没人算过。
+
+> **2.3 QPS 与 0.45 QPS 都是单副本数字，不是硬上限。**
+> 真正的硬约束是同步 pipeline + 模型延迟，不是 40 或 16 这两个数。
 >
-> 写这一句是因为容量数字很容易被后人当成"这个服务最多就这样"，然后去做本来不需要的架构改造。真正的硬约束是同步 pipeline + 模型延迟，不是 40 这个数。
+> **v1.5 更正一处引用错误：** 原文写「共享限流/熔断（`ai_sql_core/shared_state.py`）
+> 落地之后多副本才第一次真的能起」。**那个文件在 ai-sql-agent 里不存在**
+> （`find ai-sql-agent -name 'shared_state*'` 无命中）。
+> 同名文件在**另一个仓库**：`ai-helpdesk/backend/core/shared_state.py:22`，
+> 是调用方给自己的限流/熔断做的 Redis 共享状态，**解决不了服务端多副本的问题**。
+>
+> 服务端要多副本，仍然需要把限流与熔断挪到共享存储上——那件事**还没有代码**，
+> 也没有对应文件。**这一条按"待办、无实现"记，不要再引一个不存在的路径。**
+> `docker compose up -d --scale app=2` 这类扩容动作在共享限流落地之前会得到
+> "每个副本各限各的"——即实际限流阈值被副本数乘大，这是个安全问题不是性能问题。
 
 ---
 
@@ -1062,7 +1185,73 @@ routing → retrieval → planning → generation → execution → validation
    >    要不要把 `has_risk`/`degraded` 升成真闸，是一个独立决定，写清楚再改。
    > 3. 结构性的那一半在 §4.6：光靠三个布尔判不出"部分成功"和"结果被截断"。
 
-2. **§8.4 的 2.3 QPS 是单副本数字**，多副本是缓解手段，不是硬上限。
+2. ~~**§8.4 的 2.3 QPS 是单副本数字**，多副本是缓解手段，不是硬上限。~~
+   **v1.5 更正**：这句话本身没错，但它掩盖了两件更要紧的事——2.3 是 `40 ÷ 17.7` 的**推算**
+   而不是实测，而且它只管 `/query`；A2A 流式路径走的是另一个线程池，同机上限约 **0.45 QPS**。
+   另外原文提到的 `ai_sql_core/shared_state.py` **不存在**。详见改写后的 §8.4。
+
+---
+
+## 10. 版本边界：本契约约束的是 A2A **0.2 子集**
+
+**本契约不宣称与最新版 A2A 兼容。** 它约束的是我方今天实现的那个 0.2 形状的子集，
+仅此而已。这一节写下来是为了防两件事：一是有人拿"我们支持 A2A"去对接一个 v1.0 客户端；
+二是有人为了"跟上规范"去改版本字符串——**那没有任何意义**，见下。
+
+> **本节的引用约定：** `§X` 一律指**本文**的小节；引用 A2A 官方规范时写成
+> 「规范 N 节」「规范附录 A.2.1」，不带 `§`。`tools/check_contract.py` 的链接检查
+> 会把每一个 `§X` 当成本文的小节去核对，写混了会误报，也会让读者分不清在引谁。
+
+### 10.1 事实
+
+| 项 | 值 | 证据 |
+| --- | --- | --- |
+| 我方 Card 声明的 `protocolVersion` | `"0.2"` | `ai_sql_a2a/server.py:27` |
+| 我方 Card 的 `version` | `"1.1.0"`（**这是 Agent 自己的版本，不是协议版本**） | `ai_sql_a2a/server.py:28`、§6.1 |
+| A2A 官方最新已发布版本 | **1.0.0**（此前 0.3.0 / 0.2.6 / 0.1.0） | <https://a2a-protocol.org/latest/specification/>，2026-04-28 取 |
+| 我方用的是官方 SDK 吗 | **不是，手写实现** | `grep -i a2a ai-sql-agent/requirements.txt` 无命中 |
+
+手写实现这一点是好消息也是坏消息：好在没有 SDK 版本被动升级的风险，
+坏在**规范演进不会有任何编译期信号**——只能靠这一节人工盯。
+
+### 10.2 为什么改版本字符串没有意义
+
+把 `protocolVersion` 从 `"0.2"` 改成 `"1.0"` 只会让 Card 说谎。
+0.2 → 1.0 是**结构性**变更，不是版本号递增：
+
+| 变更 | 对本契约的影响 | 来源 |
+| --- | --- | --- |
+| **`kind` 判别符被移除**（规范附录 A.2.1「Kind Discriminator Removed」）。v1.0 不再靠 `kind` 区分 Part / Artifact 类型，改为看哪个字段被填充 | **伤筋动骨。** 本契约整套事件模型都建在 `kind` 上：§4.1 的 `result.kind` ∈ {`task`,`status-update`,`artifact-update`}、§4.3 的 `{"kind":"message"}`、§4.4 的 `{"kind":"text"}` / `{"kind":"data"}`。`schema/` 下四个 schema 也全是 `kind` 形状 | 规范附录 A.2.1 |
+| **流式响应改为 `StreamResponse` 包一层**，内含 `task` / `message` / `statusUpdate` / `artifactUpdate` 之一，而不是一个带 `kind` 的对象 | §4.1 的信封形状要重写；§4.2 的顺序保证要按新形状重述 | 规范 4.2 节 Streaming Events |
+| **方法名换了一套。** v1.0 侧文档用 `SendMessage` / `SendStreamingMessage` / `GetTask` / `ListTasks` / `CancelTask` / `SubscribeToTask` / `GetExtendedAgentCard` | §3.1 的 `message/stream`、§7 的 `tasks/get` 等 JSON-RPC 名字全部要重新对照。**具体的线上方法名映射本次未取到全文，标为「待核实」** | 规范 9.4 节 Core Methods（**待核实**） |
+| **Extended Agent Card 字段位置改了**（附录 A.2.2），改为经 `GetExtendedAgentCard` 单独取 | 我方没用 extended card，**影响为零**——但如果以后要用，别照 0.2 的形状加 | 规范附录 A.2.2 |
+| Agent Card 新增 `securitySchemes` / `security`、`AgentInterface` 的 `tenant` | 我方鉴权走 `X-API-Key`（§3.2），没有声明在 Card 里。迁移时这是**要补的**，不是要改的 | 规范 §Agent Card（**部分待核实**） |
+
+> **上表的取用方式：** 带「待核实」的两行是本次抓取没能拿到完整原文的部分，
+> **按线索处理，不要当结论**。要动手迁移之前，回到
+> <https://a2a-protocol.org/latest/specification/> 的附录 A 与 9.4 节逐条核对，
+> 并以 `spec/a2a.proto` 为准——规范自己写明 proto 文件才是结构定义的权威来源。
+
+### 10.3 现在怎么办
+
+**什么都不做，但把边界写明。** 理由：
+
+1. **今天的两个对端都是我们自己的。** 服务端 `ai-sql-agent`、调用方 `ai-helpdesk`，
+   没有第三方 A2A 客户端接进来。0.2 形状对双方都能用，迁移收益是零。
+2. **迁移的代价不是改版本号，是重做事件模型。** 见上表第一、二行。
+3. **但"没有第三方"是一个会变的前提。** §6.1 明确设想过"通用 A2A 客户端库，
+   见 `streaming:true` 就自动优先 stream"——那种客户端如果是照 v1.0 写的，
+   **接过来会直接解析失败**，而且失败点在事件解析，不在握手，报错会很难懂。
+
+所以：
+
+- **Card 保持 `protocolVersion: "0.2"`。** 它现在是诚实的，改了就不是。
+- **对外描述统一为「实现 A2A 0.2 的一个子集」**，不写"支持 A2A"、不写"兼容 A2A"。
+- **本节就是迁移矩阵的落点。** 哪天真要迁 v1.0，从 10.2 那张表开始，
+  先把「待核实」两行核实掉；§4.1 / §4.2 / §4.4 / §7 与 `schema/` 全部要跟着改，
+  那是一次**大版本**契约变更，走 §6，两侧同时改。
+- **不要为了"看起来跟上了"而单独改版本字符串。** 那会把一个诚实的
+  "我们只做了 0.2 的一小块"变成一个说谎的 Card，而 Card 是对端唯一的自动发现入口。
 
 ---
 
