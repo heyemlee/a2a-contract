@@ -1,0 +1,45 @@
+name: contract
+
+# 契约仓库只有文档和 schema，没有产品代码，所以 CI 只做三件机器能做的事：
+#   1. schema 自己是合法的 JSON Schema，且契约点名的枚举真的在 schema 里；
+#   2. fixtures 的实际校验结果与清单声明一致——**反例必须真的被拒**；
+#   3. 文档里的 §小节引用和文件路径都指向真实存在的东西。
+#
+# 为什么值得有：前四版的问题全都是"文档说的和现实不符"，而这三件事恰好是
+# 其中能被机器逮住的那部分（见契约附录 B 自检表第 5 条）。
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: schema + fixtures + links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: python -m pip install --upgrade pip jsonschema referencing
+
+      - name: 契约自检
+        run: python3 tools/check_contract.py
+
+      - name: 状态行与附录 A 的版本号必须一致
+        # 防的是"改了正文忘了改状态行"——前四版每一版都动过状态行，
+        # 而状态行是附录 B 判别权威副本的第一道判据。
+        run: |
+          status_ver=$(grep -m1 '^> 状态：' a2a-streaming-contract.md \
+                       | grep -oE 'v[0-9]+\.[0-9]+' | head -1)
+          latest_ver=$(grep -oE '^\| (v[0-9]+\.[0-9]+) \|' a2a-streaming-contract.md \
+                       | grep -oE 'v[0-9]+\.[0-9]+' | sort -Vr | head -1)
+          echo "状态行=$status_ver  附录 A 最新行=$latest_ver"
+          test -n "$status_ver"
+          test "$status_ver" = "$latest_ver"

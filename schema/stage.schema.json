@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/heyemlee/a2a-contract/schema/stage.schema.json",
+  "title": "progress 事件的 stage 标识符",
+  "description": "契约 §4.5。这是契约面，不是我方内部 stage 名；内部重构不得改变它，改它就是一次 §6 契约变更。",
+  "type": "string",
+  "enum": [
+    "normalization",
+    "routing",
+    "retrieval",
+    "planning",
+    "generation",
+    "execution",
+    "repair",
+    "validation",
+    "answering"
+  ],
+  "$defs": {
+    "contract-declared": {
+      "$comment": "§4.5 表里声明的九个。§9 #3 的答复是「全发」。",
+      "enum": ["normalization", "routing", "retrieval", "planning", "generation",
+               "execution", "repair", "validation", "answering"]
+    },
+    "emitted-2026-09-04": {
+      "$comment": "服务端当前实际发得出来的八个。normalization 不在 _STAGE_MAP 里（ai_sql_a2a/server.py:41-50），根因见 §4.5 的缺口框。断言「实发集合」的用例用这个子集，不要用 contract-declared。",
+      "enum": ["routing", "retrieval", "planning", "generation",
+               "execution", "repair", "validation", "answering"]
+    },
+    "repeatable": {
+      "$comment": "会按 step 重复出现的 stage（§4.5「会重复？」列）。repair 额外受「每个 step 至多一次」约束。",
+      "enum": ["generation", "execution", "repair", "validation"]
+    }
+  }
+}
