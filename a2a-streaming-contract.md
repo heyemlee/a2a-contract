@@ -1180,7 +1180,7 @@ python3 -c 'import os; print(min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
    > **建议**：
    > 1. 调用方：`_normalize` 改成显式校验——三个字段必须存在且是 JSON 布尔，
    >    缺失或类型不对按 **`has_risk=True` / `degraded=True` / `queried_database=False`**
-   >    处置（**缺失 = 不可信**，不是默认 `False`）。用例见 `CONSUMER-TESTS.md` 的 A 组。
+   >    处置（**缺失 = 不可信**，不是默认 `False`）。用例见 `CONSUMER-TESTS.md` 的 **B 组**（`fixtures/data-part/schema-invalid/`，六个反例都必须被拒，且回落方向必须是「不可信」）。
    > 2. 双边：重写上面这段"信任门槛"的描述，让它等于代码真正做的事；
    >    要不要把 `has_risk`/`degraded` 升成真闸，是一个独立决定，写清楚再改。
    > 3. 结构性的那一半在 §4.6：光靠三个布尔判不出"部分成功"和"结果被截断"。
