@@ -16,7 +16,7 @@
 > | 项 | 位置 | 怎么验 |
 > | --- | --- | --- |
 > | 服务端 `message/send` / `message/stream` | `ai-sql-agent` 的 `ai_sql_a2a/server.py` | `cd ai-sql-agent && .venv/bin/python -m pytest tests/test_a2a_server.py -q` → 2026-04-28 实跑 **12 passed** |
-> | 进度事件来源 | `ai_sql_core/trace.py` 的 `stage()` 事件汇 | 正是 §8.2 挑的那个钩子，pipeline 侧零改动（消费点在 `ai_sql_a2a/server.py:294-298` 的 `sink`） |
+> | 进度事件来源 | `ai_sql_core/trace.py` 的 `stage()` 事件汇 | 正是 §8.2 挑的那个钩子，pipeline 侧零改动（消费点在 `ai_sql_a2a/server.py:295-298` 的 `sink`） |
 > | 调用方 client | `ai-helpdesk` 的 `backend/tools/a2a_client.py` | `backend/tests/test_a2a_client.py` |
 > | 调用方 `-32004` 降级 | `ai-helpdesk/backend/tools/sql_agent_client.py:251-258` | 单测 + 实机演练（见 §6.2） |
 > | 前端进度展示 | `frontend/src/components/MessageBubble.tsx` | `frontend/src/components/__tests__/MessageBubble.test.tsx` |
@@ -48,9 +48,9 @@
 > | §1③ / §5.1 | `message/send` 固定预算 **90s**（上线前 25s / 上线后 90s 两档） | 默认 **45s**——两档里都没有这个值 | `ai-helpdesk/backend/tools/a2a_client.py:80`（`send_timeout_s: float = 45.0`）、`:273-274`（env 默认 `"45"`，注释自承「上线后改 90」，没改） | 实现待办（**且契约要补第三档**，见 §1） |
 > | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约要改（本版已改：§4.4 改写为传输终态，业务终态另立 §4.6）+ 实现待办（`execution_status` 与三个汇总数仍未实现）** |
 > | §4.5 | 九个 stage **全发**（§9 #3 答复"全发"） | 发八个，**`normalization` 不在映射表里** | `ai_sql_a2a/server.py:41-50`（`_STAGE_MAP` 八条）、`:40`（注释自承「契约 §8.2 待办」）；根因 `ai_sql_pipeline/text2sql_pipeline.py:245-257` 仍是裸 `log_event("stage.normalization")` 且只在 `changed` 时记 | 实现待办 |
-> | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:56-58` | **契约要改**（枚举的稳定性承诺是假的） |
+> | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:55-56` | **契约要改**（枚举的稳定性承诺是假的） |
 > | §7 | `tasks/get` "多副本下会大概率 `-32001`" | **恒返回 `-32004`**，与副本数无关；服务端根本没有任务表 | `ai_sql_a2a/server.py:359-362`（`tasks/get` 与 `cancel`/`resubscribe` 同列在不支持表里）；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中 | **契约要改** |
-> | §7.1 | "我方结果在它那边的去向是 `grounding_sources`，**不是 prompt 正文**（已查实）" | **两个都进。** 同一段文本先进 prompt 上下文，再按开关进 `grounding_sources` | `ai-helpdesk/backend/api/main.py:673-674`（`order_text` 进 `context_parts` → `full_context`）、`:698-700`（同一个 `order_text` 再进 `grounding_sources`） | **契约要改**（结论待重新论证，见 §7.1） |
+> | §7.1 | "我方结果在它那边的去向是 `grounding_sources`，**不是 prompt 正文**（已查实）" | **两个都进。** 同一段文本先进 prompt 上下文，再按开关进 `grounding_sources` | `ai-helpdesk/backend/api/main.py:676-678`（`order_text` 进 `context_parts` → `full_context`）、`:698-700`（同一个 `order_text` 再进 `grounding_sources`） | **契约要改**（结论待重新论证，见 §7.1） |
 > | §9.1 ① | 三个布尔是信任门槛：`queried_database==True` 且 `has_risk==False` 且 `degraded==False` | **(a)** 缺字段一律 `False`——`has_risk`/`degraded` 缺失即"无风险、未降级"（fail-open）；**(b)** `bool()` 不校验类型，`"false"` → `True`；**(c)** 真正的门槛根本不是三布尔与：只有 `queried_database` 是闸 | `ai-helpdesk/backend/tools/a2a_client.py:250-266`（`_normalize`）；门槛在 `backend/api/main.py:1041`（唯一的 `return`-空分支）、`:1062`、`:1067`（`has_risk`/`degraded` 只追加一段提示文本，**照样返回 `True` 进 sources**）。复现见 §9.1 缺口框 | 实现待办（a/b）+ **契约要改**（c） |
 >
 > 另有三处**措辞与治理**问题，同版一并改（§7 / §8.1 / §8.4 / 附录 B）：
@@ -501,8 +501,8 @@ routing → retrieval → planning → generation → execution → validation
   >   databases=["erp_db", "prod_db", "svc_db", "wms_db"] tables=16
   > ```
   >
-  > 而调用方**已经单方面加过标签**了——`ai-helpdesk/backend/tools/a2a_client.py:56-58`
-  > 的 `DATABASE_LABEL` 里多了 `prod_db` / `svc_db`，注释写着「模拟 ERP 多出来的两个；
+  > 而调用方**已经单方面加过标签**了——`ai-helpdesk/backend/tools/a2a_client.py:53-57`
+  > 的 `DATABASE_LABEL` 里多了 `prod_db` / `svc_db`（`:55-56`），注释写着「模拟 ERP 多出来的两个；
   > 接真库时按契约 §4.5 走契约变更再加」。它是对的，契约是错的：
   > **上表把一份部署配置写成了协议常量。**
   >
@@ -582,14 +582,14 @@ routing → retrieval → planning → generation → execution → validation
 
 | 字段 | 类型 / 取值域 | 状态 | 证据 |
 | --- | --- | --- | --- |
-| `database` | 见 §4.5 的 `database` 契约面 | ✅ | `ai_sql_api/result_summary.py:26` |
+| `database` | 见 §4.5 的 `database` 契约面 | ✅ | `ai_sql_api/result_summary.py:25` |
 | `success` | boolean，**严格布尔**（不接受 `"true"` / `1`） | ✅ | `result_summary.py:28`、`:83` |
 | `row_count` | integer ≥ 0 | ✅ | `result_summary.py:29` |
 | `truncated` | boolean | ✅ | `result_summary.py:30` |
-| `error` | string \| null；`null` ⟺ `success == true` | ✅ | `result_summary.py:33` |
+| `error` | string \| null；`null` ⟺ `success == true` | ✅ | `result_summary.py:32` |
 | `final_sql` | string，**实际执行的那条**（修复后的） | ✅ | `result_summary.py:27` |
-| `repair_attempts` | array，长度 ≤ `max_repair_attempts`（默认 2，§4.5） | ✅ | `result_summary.py:34` |
-| `risk_findings` | array；非空 ⟺ 该步对 `has_risk` 有贡献 | ✅ | `result_summary.py:35`、`:105` |
+| `repair_attempts` | array，长度 ≤ `max_repair_attempts`（默认 2，§4.5） | ✅ | `result_summary.py:33` |
+| `risk_findings` | array；非空 ⟺ 该步对 `has_risk` 有贡献 | ✅ | `result_summary.py:34`、`:105` |
 
 三个汇总数，**调用方不应自己 reduce**（reduce 的口径会漂）：
 
@@ -678,7 +678,7 @@ routing → retrieval → planning → generation → execution → validation
 而重跑得到的是**今天**的数据，不是当时的数据。
 
 **实现之前的处置：** `trace_id` + `steps[i].final_sql` 是唯一可用的溯源手段
-（两者今天都已经在 data part 里：`ai_sql_a2a/server.py:209`、`result_summary.py:27`）。
+（两者今天都已经在 data part 里：`ai_sql_a2a/server.py:209` 的 `trace_id`、`result_summary.py:27` 的 `final_sql`）。
 调用方至少要把这两个记进自己的会话日志——`trace_id` 今天已经记了
 （`ai-helpdesk/backend/api/main.py:1059`），`final_sql` 没有。
 
@@ -926,8 +926,8 @@ routing → retrieval → planning → generation → execution → validation
 >
 > 实际是**两个都进**，不是"进 A 不进 B"：同一段 `order_text`
 >
-> - 先拼进 prompt 上下文：`ai-helpdesk/backend/api/main.py:673-674`
->   （`context_parts.append(order_text)` → `full_context`）；
+> - 先拼进 prompt 上下文：`ai-helpdesk/backend/api/main.py:676-678`
+>   （`if order_text: context_parts.append(order_text)` → `full_context`）；
 > - 再按 `order_is_evidence` 开关进 sources：`:698-700`
 >   （`grounding_sources=[t for t in (knowledge_text, order_text if order_is_evidence else "") if t]`）。
 >
@@ -1031,25 +1031,58 @@ routing → retrieval → planning → generation → execution → validation
 | `ai-helpdesk/backend/tools/a2a_client.py:4` | 「（v1.3）」 | 同上 |
 | `ai-helpdesk/backend/tools/sql_agent_client.py:9` | commit `9081030`（= **v1.2**） | 同上 |
 
-### 8.2 代码
+### 8.2 代码（v1.5 按实际进度重写）
 
-| 位置 | 改什么 |
+> **这张表原来是一份施工清单，v1.4 之后没有跟着更新，行号已经全部漂了**——
+> 比如原文的 `ai_sql_a2a/server.py:296-299`（"把 `message/stream` 移出 `-32004` 列表"）
+> 今天指向的是事件汇的 `sink` 函数，那一列已经在 `:359-362`，而且 `message/stream`
+> 早就不在里面了。**一张行号全错的施工清单比没有更糟**：照着它去改会改到别的地方。
+>
+> 改成"做完没有 + 现在在哪"。行号为 2026-04-28 复核值。
+
+| 位置 | 原计划 | 状态 |
+| --- | --- | --- |
+| `ai_sql_core/trace.py` 的 `stage()` | 加 ContextVar 事件汇，pipeline 侧零改动 | ✅ **已做**。`_stage_sink` 在 `trace.py:27`，`use_stage_sink()` 在 `:33`，`stage()` 在 `:173`；服务端消费点 `ai_sql_a2a/server.py:295-298` |
+| `ai_sql_pipeline/text2sql_pipeline.py` | `normalization` 由裸 `log_event` 改成真 `stage()` | ❌ **未做**。仍在 `:245-257`，且只在 `changed` 为真时记。**这就是 §4.5 的缺口**（原文写的 `:209-221` 早已漂到别处） |
+| 准入提前到流打开之前 | `require_api_key` + `limiter.check` | ✅ **已做**，但落点不是原文写的 `ai_sql_api/app.py`——在 `ai_sql_a2a/server.py:146-157` 的 `_admit()`，两条 transport 各调一次（`:268`、`:334`，后者注释写着"流打开之前"） |
+| Agent Card | `capabilities.streaming` 由开关决定；`version` → `1.1.0` | ✅ **已做**。`ai_sql_a2a/server.py:92-96`、`:28` |
+| `message/stream` 移出 `-32004` 列表 | `tasks/cancel`、`tasks/resubscribe` 留在里面 | ✅ **已做**。现在那张表在 `ai_sql_a2a/server.py:359-362`，`tasks/get` 也在里面（§7 已按实际改写） |
+| 新增 stream handler | 事件构造 + 顺序保证 + 中途失败补终态 | ✅ **已做**。`_stream_events` 在 `ai_sql_a2a/server.py:282`，失败补终态在 `:322` |
+| `AI_SQL_A2A_STREAMING` 开关 | 新增 | ✅ **已做**。`ai_sql_core/settings.py:184`（`a2a_streaming: bool = True`，默认开；`:185-197` 的 docstring 记了 v1.3 阻断解除的两次实机演练） |
+
+**还没做的两件事**，都在 §4.6 里定义好了形态：
+
+| 要改什么 | 为什么 |
 | --- | --- |
-| `ai_sql_core/trace.py` 的 `stage()` | **进度事件的唯一钩子。** 加一个 ContextVar 事件汇：`stage()` 进出时向汇里推一条。pipeline 侧**零改动**——所有阶段本来就都穿过这一个上下文管理器。这是整个方案最省的地方。 |
-| `ai_sql_pipeline/text2sql_pipeline.py:209-221` | `normalization` 目前是裸 `log_event` 且只在 `changed` 时记，要变成真 `stage()` 才能进事件流（§4.5 末条） |
-| `ai_sql_api/app.py` | 把 `require_api_key` + `limiter.check` 提到流打开之前（§3.2 / §5.5）。同步 pipeline 跑在工作线程里，事件经队列喂给 async 生成器——`/query` 是同步 `def`，`service.run()` 阻塞，不要为此改成 async pipeline |
-| `ai_sql_a2a/server.py:92-96` | Card：`capabilities.streaming` → 由开关决定；`version` → `1.1.0` |
-| `ai_sql_a2a/server.py:296-299` | `message/stream` 移出 `-32004` 列表（`tasks/cancel`、`tasks/resubscribe` 留在里面） |
-| `ai_sql_a2a/server.py` | 新增 stream handler：事件构造 + 顺序保证（§4.2）+ 中途失败补终态（§5.2） |
-| `ai_sql_core/settings.py` | 新增 `AI_SQL_A2A_STREAMING` 开关（§6.2） |
+| `ai_sql_api/result_summary.py` + `ai_sql_a2a/server.py` 的 `_artifact()` | 把 `execution_status` 与 `succeeded_steps` / `failed_steps` / `repaired_steps` 放进 data part。**后三个 `result_summary.py:93-94` 已经算好了**，只是 `server.py:203-211` 没带上；`execution_status` 按 §4.6.1 那张判据表现算即可，不用改 pipeline |
+| `ai_sql_pipeline/text2sql_pipeline.py:245-257` | `normalization` 改成真 `stage()`（顺带修好"只在 changed 时记"这个观测盲区） |
 
-### 8.3 测试
+### 8.3 测试（v1.5 按实际进度重写）
 
-| 位置 | 改什么 |
+> 原表的两行也漂了：`tests/test_a2a_server.py:54-56` 现在是
+> `test_card_reflects_the_streaming_flag`——**已经跟着开关走了**，不是原文说的
+> "断言 `assertFalse(caps["streaming"])`"。
+
+现状（2026-04-28 实跑：`cd ai-sql-agent && .venv/bin/python -m pytest tests/test_a2a_server.py -q` → **12 passed**）：
+
+| 原计划 | 状态 |
 | --- | --- |
-| `tests/test_a2a_server.py:54-56` | 现在断言 `assertFalse(caps["streaming"])`，要跟着开关走 |
-| `tests/test_a2a_server.py:165-168` | 现在断言 `message/stream` 返回 `-32004`，要移出该用例 |
-| 新增 | 事件顺序保证（§4.2）、终态唯一性、中途失败补终态、开关关掉时退回 `-32004` |
+| Card 断言跟着开关走 | ✅ `test_card_reflects_the_streaming_flag`（`:54`） |
+| `message/stream` 不再恒返回 `-32004` | ✅ `test_stream_returns_32004_when_flag_is_off`（`:63`）改成了"**开关关掉时**才 `-32004`" |
+| 事件顺序保证（§4.2） | ✅ `test_stream_event_order_is_guaranteed`（`:121`） |
+| 终态唯一性 | ✅ 同上用例内 |
+| 中途失败补终态（§5.2） | ✅ `test_mid_stream_failure_ends_with_a_failed_terminal`（`:166`） |
+| send / stream 同构（§4.4） | ✅ `test_send_returns_a_completed_task_with_isomorphic_artifact`（`:90`）、`test_stream_and_send_share_one_audit_shape`（`:187`） |
+| 准入失败是 JSON 不是 SSE（§3.2） | ✅ `test_stream_admission_failures_are_json_not_sse`（`:158`） |
+
+**还缺的**，全部列在 `CONSUMER-TESTS.md` 里，两侧各自接：
+
+- **B 组**：schema 反例必须被拒，且回落方向是"不可信"（§9.1 缺口的回归测试）；
+- **C 组**：信任反例。其中 `dp-trust-01`（唯一一步失败但三布尔全"干净"）
+  **在 `execution_status` 上线之前应当是红的**，标 `xfail`，不要删也不要放宽断言；
+- **E 组**：`stage` 实发集合断言用 `emitted-2026-09-04` 而不是 `contract-declared`，
+  差的那一个就是 `normalization`；
+- **D 组**：`database` 标识符按 §4.5 缺口分开断言"实际发什么"与"调用方能认多少"。
 
 ### 8.4 容量（不改代码，但要知道）
 
