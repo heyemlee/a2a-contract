@@ -96,14 +96,18 @@ def check_schemas() -> None:
            f"差集 {sorted(declared - emitted)}（§4.5 缺口）")
 
     db = json.loads((SCHEMA_DIR / "database-id.schema.json").read_text(encoding="utf-8"))
-    contract_ids = set(db["$defs"]["contract-declared"]["enum"])
-    deployed = set(db["$defs"]["deployed-2026-09-04"]["enum"])
+    current = set(db["$defs"]["current-2026-09-04"]["enum"])
+    retired = set(db["$defs"]["retired-v1.6"]["enum"])
     known = set(db["$defs"]["known"]["enum"])
-    if known != contract_ids | deployed:
-        fail("database-id.schema.json: known 必须等于 contract-declared ∪ deployed")
+    # v1.6 起 database 的契约面是 pattern，不是枚举；$defs 只是断言用的具名集合。
+    # 这里守两条：退役集与生效集不得相交（否则就是改名没改干净），known 必须是二者的并。
+    if current & retired:
+        fail(f"database-id.schema.json: current 与 retired 相交 {sorted(current & retired)}")
+    elif known != current | retired:
+        fail("database-id.schema.json: known 必须等于 current ∪ retired")
     else:
-        ok(f"database 枚举：契约声明 {sorted(contract_ids)}、实际部署 {sorted(deployed)}，"
-           f"契约里有而部署里没有的 {sorted(contract_ids - deployed)}（§4.5 缺口）")
+        ok(f"database 契约面 = pattern {db['pattern']}；当前生效 {sorted(current)}、"
+           f"v1.6 退役 {sorted(retired)}（mes_db→prod_db 改名、pm_db 并入 erp_db）")
     pattern = re.compile(db["pattern"])
     for ident in sorted(known):
         if not pattern.match(ident):

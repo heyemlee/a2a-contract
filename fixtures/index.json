@@ -1,7 +1,7 @@
 {
   "$comment": "跨仓库 golden fixtures 的清单。两侧 CI 都读这个文件，不要各自维护一份用例表——用例表分叉就是副本漂移的老毛病换个地方复发。字段含义见 fixtures/README.md 与 CONSUMER-TESTS.md。",
   "contract": "a2a-streaming-contract.md",
-  "contract_version": "v1.5",
+  "contract_version": "v1.6",
   "cases": [
     {"id": "dp-valid-01", "group": "A", "file": "data-part/valid/01-success-single-step.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
@@ -17,6 +17,11 @@
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
      "trust": "usable_as_source",
      "why": "跨库两步全成功。第二步 row_count=0 但 success=true——不影响整体可用"},
+
+    {"id": "dp-valid-04", "group": "D", "file": "data-part/valid/04-unlisted-database.json",
+     "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
+     "trust": "usable_as_source",
+     "why": "清单外但形状合法的标识符 hr_db。v1.6 起新增库不算契约变更，所以这是**常规路径不是异常路径**：调用方必须照常采信，中文映射退化为显示原始标识符，不得崩溃、不得因为不认识就判不可信"},
 
     {"id": "dp-bad-01", "group": "B", "file": "data-part/schema-invalid/01-missing-has-risk.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "invalid",
