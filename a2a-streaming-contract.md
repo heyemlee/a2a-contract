@@ -1,17 +1,25 @@
 # A2A 流式契约：`message/stream`
 
-> 状态：**v1.4，两侧均已实现并端到端验证**。
+> 状态：**v1.5，链路已通；下表条款未兑现**。
 >
-> v1.2 曾声称「服务端已全部实现」，v1.3 核对 GitHub 后推翻——那份声明没有任何
-> 对应代码。所以这次改回「已实现」，把证据一并写下，让下一个人能自己复核：
+> 这一行改过三次口径，每次都是上一次说过头了：v1.2 只写「已实现」不写证据 →
+> v1.3 核对 GitHub 后推翻 → v1.4 附证据表重新声明。**v1.5 是第三次收口，
+> 而这次的病因是新的：不是"没有证据"，是"证据证的不是契约条款"。**
+>
+> v1.4 那张表证明的是**端到端链路能跑通**——发得出事件、收得到终态、前端画得出步骤。
+> 这件事是真的，下面原样保留。但它不等于**条款逐条兑现**：链路跑通只要求事件流的
+> *形状*对，条款兑现要求每一个数值、每一个字段、每一个状态映射都对。
+> 2026-04-28 回到两侧代码逐条复核，下表这些条款没有兑现。
+>
+> ### 仍然成立的部分：链路证据（v1.4 的表，口径改为「链路」）
 >
 > | 项 | 位置 | 怎么验 |
 > | --- | --- | --- |
-> | 服务端 `message/send` / `message/stream` | `ai-sql-agent` 的 `ai_sql_a2a/` | `tests/test_a2a_server.py` 12 个契约测试 |
-> | 进度事件来源 | `ai_sql_core/trace.py` 的 `stage()` 事件汇 | 正是 §8.2 挑的钩子，pipeline 侧零改动 |
-> | 调用方 client | `ai-helpdesk` 的 `backend/tools/a2a_client.py` | `tests/test_a2a_client.py` |
-> | 调用方 `-32004` 降级 | 同上 | 单测 + **实机演练**（见 §6.2） |
-> | 前端进度展示 | `frontend/src/components/MessageBubble.tsx` | `MessageBubble.test.tsx` |
+> | 服务端 `message/send` / `message/stream` | `ai-sql-agent` 的 `ai_sql_a2a/server.py` | `cd ai-sql-agent && .venv/bin/python -m pytest tests/test_a2a_server.py -q` → 2026-04-28 实跑 **12 passed** |
+> | 进度事件来源 | `ai_sql_core/trace.py` 的 `stage()` 事件汇 | 正是 §8.2 挑的那个钩子，pipeline 侧零改动（消费点在 `ai_sql_a2a/server.py:294-298` 的 `sink`） |
+> | 调用方 client | `ai-helpdesk` 的 `backend/tools/a2a_client.py` | `backend/tests/test_a2a_client.py` |
+> | 调用方 `-32004` 降级 | `ai-helpdesk/backend/tools/sql_agent_client.py:251-258` | 单测 + 实机演练（见 §6.2） |
+> | 前端进度展示 | `frontend/src/components/MessageBubble.tsx` | `frontend/src/components/__tests__/MessageBubble.test.tsx` |
 >
 > 端到端实测（客服 → A2A → 模拟 ERP，2026-04-27）：
 >
@@ -21,8 +29,40 @@
 > [ 7.8s] 正在规划查询步骤      [31.5s] meta → 38.5s 第一个字 → 41.5s 完成
 > ```
 >
-> **§2 那段「委派期间零字节」的空白填上了。** 服务端侧相邻事件最长间隔 9.5s，
+> **§2 那段「委派期间零字节」的空白确实填上了**——服务端侧相邻事件最长间隔 9.5s，
 > 远低于 §1 的 20s 静默阈值。
+>
+> > 连带补一件 v1.4 没说的事：**A2A 还不是调用方的默认路径。**
+> > `SQL_AGENT_TRANSPORT` 默认仍是 `query`（`ai-helpdesk/backend/tools/sql_agent_client.py:152`），
+> > 上面那次实测是显式切到 `a2a` 跑的。按 §1「上线顺序」的判据，
+> > **流式尚未"上线并承接流量"**——这不是缺陷，但它决定了下表第一行该怎么读。
+>
+> ### 未兑现的条款（v1.5 新增，逐条对应小节编号）
+>
+> 每一条都在正文对应小节里就地标了 **⚠️ 缺口**，两处必须同时改，改完两处一起删。
+> 「性质」列区分两种完全不同的处置：**实现待办** = 契约的设计意图保留、代码要追上；
+> **契约要改** = 代码没错，是契约把事实写错了或写得过于绝对。
+>
+> | 条款 | 契约怎么写 | 代码实际是什么 | 证据（2026-04-28 复核） | 性质 |
+> | --- | --- | --- | --- | --- |
+> | §1③ / §5.1 | `message/send` 固定预算 **90s**（上线前 25s / 上线后 90s 两档） | 默认 **45s**——两档里都没有这个值 | `ai-helpdesk/backend/tools/a2a_client.py:80`（`send_timeout_s: float = 45.0`）、`:273-274`（env 默认 `"45"`，注释自承「上线后改 90」，没改） | 实现待办（**且契约要补第三档**，见 §1） |
+> | §4.4 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；`failed_steps > 0` 照发 `completed` | `ai_sql_a2a/server.py:277`（send 的 `failed` 只在 `except Exception` 里）、`:317`（stream 对 `done` 硬编码 `"completed"`）；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测见 §4.4 缺口框 | 实现待办（v1.5 §4.4 先把语义定清楚） |
+> | §4.5 | 九个 stage **全发**（§9 #3 答复"全发"） | 发八个，**`normalization` 不在映射表里** | `ai_sql_a2a/server.py:41-50`（`_STAGE_MAP` 八条）、`:40`（注释自承「契约 §8.2 待办」）；根因 `ai_sql_pipeline/text2sql_pipeline.py:245-257` 仍是裸 `log_event("stage.normalization")` 且只在 `changed` 时记 | 实现待办 |
+> | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:56-58` | **契约要改**（枚举的稳定性承诺是假的） |
+> | §7 | `tasks/get` "多副本下会大概率 `-32001`" | **恒返回 `-32004`**，与副本数无关；服务端根本没有任务表 | `ai_sql_a2a/server.py:359-362`（`tasks/get` 与 `cancel`/`resubscribe` 同列在不支持表里）；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中 | **契约要改** |
+> | §7.1 | "我方结果在它那边的去向是 `grounding_sources`，**不是 prompt 正文**（已查实）" | **两个都进。** 同一段文本先进 prompt 上下文，再按开关进 `grounding_sources` | `ai-helpdesk/backend/api/main.py:673-674`（`order_text` 进 `context_parts` → `full_context`）、`:698-700`（同一个 `order_text` 再进 `grounding_sources`） | **契约要改**（结论待重新论证，见 §7.1） |
+> | §9.1 ① | 三个布尔是信任门槛：`queried_database==True` 且 `has_risk==False` 且 `degraded==False` | **(a)** 缺字段一律 `False`——`has_risk`/`degraded` 缺失即"无风险、未降级"（fail-open）；**(b)** `bool()` 不校验类型，`"false"` → `True`；**(c)** 真正的门槛根本不是三布尔与：只有 `queried_database` 是闸 | `ai-helpdesk/backend/tools/a2a_client.py:250-266`（`_normalize`）；门槛在 `backend/api/main.py:1041`（唯一的 `return`-空分支）、`:1062`、`:1067`（`has_risk`/`degraded` 只追加一段提示文本，**照样返回 `True` 进 sources**）。复现见 §9.1 缺口框 | 实现待办（a/b）+ **契约要改**（c） |
+>
+> 另有三处**措辞与治理**问题，同版一并改（§7 / §8.1 / §8.4 / 附录 B）：
+>
+> | 位置 | 问题 | 证据 |
+> | --- | --- | --- |
+> | §8.1 | 表里三段引文**从未进过任何提交**——v1.3 已指出，v1.4 没处理，条目还挂着 | `cd ai-sql-agent && git log --oneline -S"秒级同步"` / `-S"seconds-scale"` 均为空；两个 README 现在 `stream`/`A2A` 一次都不出现（`grep -ci stream README.md` → 0） |
+> | §8.4 | 引用了一个不存在的文件 `ai_sql_core/shared_state.py`；`2.3 QPS` 是推算不是实测 | `find ai-sql-agent -name 'shared_state*'` 无命中；真身在 **另一个仓库**：`ai-helpdesk/backend/core/shared_state.py:22` |
+> | 附录 B | 要求"引用时带 commit"，但仓库**零 tag**，两侧引用的还是旧版本 | `git tag -l` 空；`ai-sql-agent/ai_sql_a2a/__init__.py:4` 写「v1.3」、`ai-helpdesk/backend/tools/a2a_client.py:4` 写「v1.3」、`sql_agent_client.py:9` 带的 commit 是 `9081030`（= v1.2） |
+>
+> **这一版只改文档陈述，让文档与现实对齐；没有为了"让契约成立"去动另外两个仓库的任何一行代码。**
+> 建议怎么改写在各缺口框里，落地是双边事件，由两侧各自排期。
 >
 > 本文的"我方"= ai-sql-agent（A2A 服务端），"调用方"= ai-helpdesk（A2A 客户端）。
 >
@@ -89,6 +129,28 @@
 >
 > 判据是**服务端流式真的上线并承接流量**，不是"服务端实现完了"——
 > 实现完成 ≠ 上线，中间还隔着部署。
+>
+> #### ⚠️ 缺口（v1.5）：代码跑的是上表没有的第三档
+>
+> **性质：实现待办 + 契约要补一档。**
+>
+> `send_timeout_s` 默认 **45s**（`ai-helpdesk/backend/tools/a2a_client.py:80`；
+> env `SQL_AGENT_A2A_SEND_TIMEOUT_S` 默认也是 `"45"`，见 `:273-274`，
+> 注释自承「上线后改 90」——没改）。**45 既不是上线前该有的 25，也不是上线后该有的 90。**
+>
+> 两件事要分开看，不要笼统说成"违约"：
+>
+> 1. **上线判据这一侧，契约对、代码也没违约。** `SQL_AGENT_TRANSPORT` 默认仍是 `query`
+>    （`ai-helpdesk/backend/tools/sql_agent_client.py:152`），流式还没承接流量，
+>    所以现在**本来就不该**是 90s。
+> 2. **但上表说这个阶段是 25s，代码是 45s。** 差额不是笔误：25s 是旧值，
+>    45s 是实现时按 p90 17.7s（§2）自己放宽的。真正缺的是一档状态——
+>    **「已实现、尚未承接流量」**。这一档 v1.2 写上线顺序时还不存在，v1.4 才第一次出现。
+>
+> **建议（双边决定，任一方不得单方面定）：** 把上表补成三档——
+> 未实现 25s / **已实现未承接流量 45s** / 已承接流量 90s，即把代码现值扶正为契约值；
+> 或者把代码改回 25s。两条都行，**不能像现在这样契约写两档、代码跑第三档**。
+> 无论选哪条，切到 90s 的动作仍受本节「上线顺序」约束，不因补档而放宽。
 
 调用方当前实测时序（委派给我方的那段是静默期）：
 
@@ -316,13 +378,37 @@ N×  status-update     进度，final=false，state=working
 
 > `degraded=true`（模型不可用、走了历史 SQL 重放）**仍然是 `completed`**，降级标记在 artifact 的 data part 里。这与 `message/send` 今天的行为一致，不要在流式下改判。
 
+#### ⚠️ 缺口（v1.5）：上表的 `failed` 在代码里基本发不出来
+
+**性质：实现待办。**
+
+实际判据是「pipeline 有没有抛异常」，不是「有没有步骤失败」：
+`ai_sql_a2a/server.py:277` 的 `failed` 只出现在 `except Exception` 分支里，
+`:317` 对正常结束的 `done` **硬编码** `"completed"`；
+`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。
+
+2026-04-28 实测（把 `summarize_result` 打桩成 `failed_steps=1`、`steps[0].success=False`
+的摘要，两条 transport 各发一次）：
+
+```
+send   终态 state = completed     steps[0].success = False     data part 里没有 failed_steps
+stream 终态 state = completed     task → 6×status-update → artifact-update → status-update(final)
+```
+
+**SQL 跑失败了，调用方收到的仍然是 `completed`。** 按 §5.1「`final:true` + `completed`
+⟺ 成功」，这恰好就是本契约最想堵死的那件事——半个结果被当成成功。
+
+但这不只是一个实现 bug：**上表定义的是传输终态，调用方需要的是业务终态**，
+契约层从来没给过后者。所以 v1.5 不止标缺口，还在 **§4.6** 把业务终态语义补齐——
+不先定义清楚，调用方照着改也是改错方向。
+
 ### 4.5 stage 映射表 ← **本文核心**
 
 **契约面是下表的 `stage` 值，不是我方内部的 stage 名。** 内部重构（比如把 `sql_generation` 改名）不得改变这一列；这一列要改就是一次契约变更，走 §6。
 
 | 我方 `metadata.stage` | 出现时机 | 会重复？ | 附带字段 | 我方默认文案 | 调用方 progress 建议 |
 | --- | --- | --- | --- | --- | --- |
-| `normalization` | 每次（查库路径） | 否 | — | 正在理解问题 | **建议不展示**（内部动作，用户看不出差别） |
+| `normalization` ⚠️ **未发送** | 每次（查库路径） | 否 | — | 正在理解问题 | **建议不展示**（内部动作，用户看不出差别） |
 | `routing` | 每次 | 否 | — | 正在判断问题类型 | 可对应你那条 `event: routing` |
 | `retrieval` | 仅查库路径 | 否 | `with_memory` | 正在检索知识库 | ← 对应你 `[0.00s]` 那条 |
 | `planning` | 仅查库路径 | 否 | `short_path` | 正在规划查询步骤 | 展示 |
@@ -345,6 +431,30 @@ N×  status-update     进度，final=false，state=working
 > 展示所需的字段一个不缺：`execution` 的 `database` 在进入时就有，
 > "正在查 ERP 订单库"这句照常拼得出来。
 
+#### ⚠️ 缺口（v1.5）：九个 stage 里 `normalization` 没在发
+
+**性质：实现待办。** §9 #3 的答复是"全发"，实际发八个。
+
+`_STAGE_MAP`（`ai_sql_a2a/server.py:41-50`）只有八条，没有 `normalization`；
+`:40` 的注释自承「normalization 今天还不是真 stage（契约 §8.2 待办），所以不会出现」。
+根因就是本节末条早就写下的那件事：`ai_sql_pipeline/text2sql_pipeline.py:245-257`
+里它仍是一条裸 `log_event("stage.normalization", …)`，而且**只在 `changed` 为真时才记**，
+所以事件汇（`trace.stage()`）根本收不到它。
+
+2026-04-28 实测一次查库请求的 stage 序列：
+
+```
+routing → retrieval → planning → generation → execution → validation
+```
+
+**影响很小但必须写下来**：`normalization` 在 §4.5 就是"建议不展示"的那一档，
+调用方少收一条不影响展示。真正的问题是**契约说全发、实际不全发**——
+下一个人照着 §4.5 写消费端断言就会挂。
+
+**建议**：要么按 §8.2 把它改成真 `stage()`（那样也顺带修好"只在 changed 时记"
+这个观测盲区），要么把它从 §4.5 的表里删掉、§9 #3 的答复改成"发八个"。
+**两条都可以，但契约和代码必须选同一条。**
+
 补充说明：
 
 - **`database` 的取值是契约面**，与 `stage` 值同等级别——调用方自己做中文映射，改动即契约变更，走 §6。当前钉死为这四个标识符，**不会**在非契约变更中改名或新增：
@@ -357,6 +467,35 @@ N×  status-update     进度，final=false，state=working
   | `wms_db` | WMS：库存、出入库 |
 
   调用方按这张表出文案，**不要去解析我方的默认文案字符串**——那一列是给没做映射的客户端兜底用的，不保证稳定。
+
+  > #### ⚠️ 缺口（v1.5）：这四个标识符没有被钉死，也钉不死
+  >
+  > **性质：契约要改——"不会改名或新增"这句稳定性承诺是假的。**
+  >
+  > 标识符集合不是代码里的常量，是**部署配置的产物**：语义层目录喂什么就有什么。
+  > 当前部署 `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`（`ai-sql-agent/.env:58`），
+  > `ls ai-sql-agent/sim_erp/semantic/` 得到的是
+  > **`erp_db` / `prod_db` / `svc_db` / `wms_db`**——
+  > 也就是说 **`mes_db` 和 `pm_db` 在当前运行的系统里根本不存在**，
+  > 它们只活在 benchmark 数据集里（`ai-sql-agent/benchmark/runner.py:246`）。
+  >
+  > 启动日志可自证：
+  >
+  > ```
+  > ai_sql.semantic semantic.loaded source=sim_erp/semantic
+  >   databases=["erp_db", "prod_db", "svc_db", "wms_db"] tables=16
+  > ```
+  >
+  > 而调用方**已经单方面加过标签**了——`ai-helpdesk/backend/tools/a2a_client.py:56-58`
+  > 的 `DATABASE_LABEL` 里多了 `prod_db` / `svc_db`，注释写着「模拟 ERP 多出来的两个；
+  > 接真库时按契约 §4.5 走契约变更再加」。它是对的，契约是错的：
+  > **上表把一份部署配置写成了协议常量。**
+  >
+  > **建议**：把 `database` 的契约面从"枚举值"降为"**枚举的形状 + 一份当前生效清单**"——
+  > 标识符必须是 `^[a-z][a-z0-9_]*_db$`、必须在 Agent Card 或一个可拉取的清单里声明；
+  > 具体有哪几个随部署走，新增不算契约变更，**但删除或改名算**（那会让调用方的中文
+  > 映射静默退化成显示原始标识符）。schema 侧的落法见 `schema/database-id.schema.json`
+  > 与 `CONSUMER-TESTS.md` 的 D 组用例。
 - **`step` 从 1 开始**，跨库查询会有多步。
 
 #### repair 的次数上限（调用方用来判断"推进 vs 原地打转"）
@@ -379,7 +518,7 @@ N×  status-update     进度，final=false，state=working
 
 > **诚实标注**：`repair` 有硬上限（每 step 一次、内部重试 2 次），**步骤数没有**。理论上规划阶段给出 N 步就会有至多 N 个 repair 事件。真正兜住这个的是调用方的 90s 硬上限，不是我方的配置。要不要给规划步骤数加一个硬上限，是一个独立问题，不在本契约范围内——但如果调用方希望契约层面给出绝对上限，说一声，我方加一个 `max_plan_steps` 配置即可。
 - **内部有而契约不暴露的 stage**：`memory_context`（会话记忆读取，纯内部管道，对用户没有展示价值）。刻意不发，避免契约面无谓变大。
-- **`normalization` 在我方今天不是一个真正的 stage**（它是 `text2sql_pipeline.py:216` 一条裸 `log_event`，且只在问题被改写时才记）。要发这个事件需要先把它变成真 stage，见 §8。
+- **`normalization` 在我方今天仍不是一个真正的 stage**（`ai_sql_pipeline/text2sql_pipeline.py:245-257` 一条裸 `log_event("stage.normalization", …)`，且只在 `normalization.changed` 为真时才记）。要发这个事件需要先把它变成真 `stage()`，见 §8.2 —— **v1.4 没做，见上面的缺口框。**（行号为 2026-04-28 复核值；v1.0 写的 `:216` 已漂移。）
 
 ---
 
@@ -531,7 +670,13 @@ N×  status-update     进度，final=false，state=working
 | **push notifications** | ❌ 不做 | Card 保持 `pushNotifications:false`。 |
 | **进度百分比 / ETA** | ❌ 不做 | 事件数量本身不稳定（§4.2），任何百分比都是编的。 |
 | **事件重投递 / at-least-once** | ❌ 不做 | 尽力而为。丢了就是丢了，靠 §5.1 的终态判据兜底。 |
-| **`tasks/get` 在多副本下可靠** | ⚠️ 已知缺陷 | 任务表是进程内的，多副本下 `tasks/get` 会大概率 `-32001`。流式不改变这一点。**建议调用方不要依赖 `tasks/get`**，终态事件里已经有全部结果。 |
+| **`tasks/get`** | ❌ 不做 | **恒返回 `-32004`，与副本数无关。** 我方根本不存任务状态：`ai_sql_a2a/server.py:359-362` 把 `tasks/get` 与 `tasks/cancel`、`tasks/resubscribe` 并列在同一张不支持表里；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中。**调用方不要依赖 `tasks/get`**，终态事件里已经有全部结果。 |
+
+> **v1.5 改了 `tasks/get` 这一行的性质，不只是措辞。** v1.0–v1.4 把它写成
+> "⚠️ 已知缺陷 / 多副本下会大概率 `-32001`"，暗示单副本下可用、多副本下不可靠。
+> 代码里从来不是这样：它和 `tasks/cancel` 在同一张不支持表里，任何副本数下都是 `-32004`。
+> 差别对调用方是实质性的——`-32001`（任务不存在）值得重试或降级，
+> `-32004`（不支持）**永远**不该重试。写错的那版会诱导调用方写出一条永远走不通的分支。
 
 ### 7.1 为什么答案增量（delta）是**永久**不做
 
@@ -540,7 +685,27 @@ N×  status-update     进度，final=false，state=working
 调用方那侧的事实（已查实）：
 
 - 它自己的 `event: delta` 是**它自己 LLM 的输出**，经 `PolicyStreamGuard` 按句放行后才进用户可见流；
-- **我方的委派结果在它那边的去向是 `grounding_sources`，不是 prompt 正文**——用途是让守卫判定本地 agent 的价格/时效表述"有出处"，而不是当答案展示给用户。
+- ~~**我方的委派结果在它那边的去向是 `grounding_sources`，不是 prompt 正文**~~
+  ⚠️ **这条前提是错的（v1.5 查实）。**
+
+> #### ⚠️ 缺口（v1.5）：上面第二条前提与代码不符
+>
+> **性质：契约要改。**
+>
+> 实际是**两个都进**，不是"进 A 不进 B"：同一段 `order_text`
+>
+> - 先拼进 prompt 上下文：`ai-helpdesk/backend/api/main.py:673-674`
+>   （`context_parts.append(order_text)` → `full_context`）；
+> - 再按 `order_is_evidence` 开关进 sources：`:698-700`
+>   （`grounding_sources=[t for t in (knowledge_text, order_text if order_is_evidence else "") if t]`）。
+>
+> 也就是说 `grounding_sources` 不是"去向"，是**同一段文本的第二个用途**。
+> 那个开关区分的也不是"进不进 prompt"，而是"能不能当出处"——
+> 委派失败时的降级提示同样进 prompt 正文，只是不进 sources
+> （`main.py:1032` 起的 `[业务系统查询未完成]` 分支返回 `(提示块, False)`；
+> 设计说明在 `:987`，开关的理由在 `:695-696`「它是指令不是证据」）。
+>
+> **本节的结论（永久不做 delta）本身不受影响，但论证站在一条错的前提上，必须重写**——见 §7.2。
 
 所以如果我方发 delta 而它转发：**未经 `PolicyStreamGuard` 的文本会直接落到用户可见流上**，守卫设计当场失效。我方的输出在它的架构里本来就不该走展示通道。
 
@@ -619,6 +784,52 @@ N×  status-update     进度，final=false，state=working
    artifact 里——这正是 §4.4"与 `message/send` 同构"的实际用途，不是形式要求。
    少一个字段，调用方的判定就会静默变成"不可信"，表现为委派白做了。
 
+   > #### ⚠️ 缺口（v1.5）：这一条有三处不成立，其中一处方向反了
+   >
+   > **性质：(a)(b) 实现待办；(c) 契约要改。**
+   >
+   > **(a) 缺字段不是"变成不可信"，两个字段是"变成可信"。**
+   > `ai-helpdesk/backend/tools/a2a_client.py:250-266` 的 `_normalize()` 对三个字段
+   > 一律 `bool(data.get(k, False))`。对 `queried_database` 这是 fail-safe（缺 → `False` → 不采信），
+   > 但对 `has_risk` / `degraded` **方向是反的**：缺 → `False` → 判成"无风险、未降级" → **采信**。
+   >
+   > **(b) `bool()` 不校验类型。** 任何非空字符串都为真，`"false"` → `True`。
+   >
+   > 2026-04-28 复现（可直接重跑）：
+   >
+   > ```bash
+   > cd ai-helpdesk && backend/.venv/bin/python -c '
+   > import sys; sys.path.insert(0,"backend")
+   > from tools.a2a_client import A2AClient as C
+   > art=lambda d:{"parts":[{"kind":"data","data":d}]}
+   > print("缺 has_risk/degraded ->", {k:C._normalize(art({"queried_database":True}),{})[k]
+   >       for k in ("queried_database","has_risk","degraded")})
+   > print("字符串 \"false\"    ->", {k:C._normalize(art({"has_risk":"false"}),{})[k]
+   >       for k in ("has_risk",)})'
+   > ```
+   > ```
+   > 缺 has_risk/degraded -> {'queried_database': True, 'has_risk': False, 'degraded': False}   ← 门槛通过
+   > 字符串 "false"        -> {'has_risk': True}                                                 ← 与字面相反
+   > ```
+   >
+   > **(c) 真正的门槛根本不是三个布尔的与。** 上面这句"三者同时满足"是契约自己写错的：
+   > `ai-helpdesk/backend/api/main.py` 里只有 `queried_database` 是闸——
+   > `:1041` `if not data.get("queried_database"): return "", False`；
+   > 而 `:1062` 的 `has_risk` 和 `:1067` 的 `degraded` **只往上下文里追加一段提示文本，
+   > 函数照样 `return …, True`**，结果照样进 `grounding_sources`。
+   >
+   > 这个设计未必是错的——把带风险的数据连同风险提示一起交给 Agent，可能比整段丢掉更好。
+   > 错的是**契约把它描述成了一道三重闸**，于是我方一直以为"少发一个字段最坏是白做工"，
+   > 实际最坏是**带风险/降级的数据被当成可信出处**。
+   >
+   > **建议**：
+   > 1. 调用方：`_normalize` 改成显式校验——三个字段必须存在且是 JSON 布尔，
+   >    缺失或类型不对按 **`has_risk=True` / `degraded=True` / `queried_database=False`**
+   >    处置（**缺失 = 不可信**，不是默认 `False`）。用例见 `CONSUMER-TESTS.md` 的 A 组。
+   > 2. 双边：重写上面这段"信任门槛"的描述，让它等于代码真正做的事；
+   >    要不要把 `has_risk`/`degraded` 升成真闸，是一个独立决定，写清楚再改。
+   > 3. 结构性的那一半在 §4.6：光靠三个布尔判不出"部分成功"和"结果被截断"。
+
 2. **§8.4 的 2.3 QPS 是单副本数字**，多副本是缓解手段，不是硬上限。
 
 ---
@@ -627,6 +838,7 @@ N×  status-update     进度，final=false，state=working
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.5 | 2026-04-28 | **状态行第三次收口：由「两侧均已实现并端到端验证」改为「链路已通；下列条款未兑现」。** 这次的病因与前两次都不同——v1.2 是无证据，v1.3 是核对后推翻，**v1.5 是有证据、但证据证的不是契约条款**：v1.4 那张表证明的是端到端链路能跑通，不是条款逐条兑现。<br>七条就地标注 ⚠️ 缺口，每条注明性质（实现待办 / 契约要改）并附文件:行号或可重跑命令：§1③（send 预算跑的是契约没有的第三档 45s）、§4.4（`failed` 只在 pipeline 抛异常时发，步骤失败照发 `completed`）、§4.5（`normalization` 未发送；四个 `database` 标识符钉不死，当前部署里 `mes_db`/`pm_db` 根本不存在）、§7（`tasks/get` 恒 `-32004`，不是「多副本下 `-32001`」，性质由「已知缺陷」改为「刻意不做」）、§7.1（「结果不进 prompt 正文」这条前提是错的，两个都进）、§9.1（三布尔缺失即可信、`bool()` 不校验类型、且真正的门槛只有一道闸不是三道）。<br>**§4.6 新增业务终态语义**：`execution_status` / 逐步骤成败 / 部分成功 / 无数据 / 截断 / as-of / 币种单位 / 来源记录标识，每个字段写明取值域与**缺失即不可信**的处置；并重新定义 `degraded` 与 `completed` 的关系。<br>**新增机器可校验资产**：`schema/`、`fixtures/`（正例 + 七类反例）、`CONSUMER-TESTS.md`、`.github/workflows/contract.yml`。<br>**措辞纠偏**：§8.1 三段引文从未进过任何提交（v1.3 已指出、v1.4 未处理）；§8.4 的 `ai_sql_core/shared_state.py` 不存在（真身在 ai-helpdesk），2.3 QPS 标注为推算并补上「A2A 路径走的是另一个线程池」；§7.2 新增 delta 结论的重新论证。<br>**§10 新增版本边界**：本契约约束 A2A **0.2 子集**，不宣称与已发布的 A2A v1.0 兼容，附迁移矩阵。<br>本版**只改文档，没有为了让契约成立去动另外两个仓库的任何一行代码** |
 | v0.1 | 2026-04-21 | 初稿，待对齐 |
 | v1.0 | 2026-04-21 | 对齐通过。§9 记录五问答复；§7.1 delta 由"v1 不做"改为**永久不做**并写入 `PolicyStreamGuard` 理由；§6.2 加回滚路径失效前提；§4.5 库标识符升为契约面、附带字段按实现修正 |
 | v1.1 | 2026-04-21 | 调用方超时由固定 25s 改为**自适应**（收到事件续命 / 静默 20s 判死 / 总长 90s 硬上限）。§1③、§2、§3.4、§5 全节改口径；§3.4 的"不发心跳"理由重写为"保活帧会削弱故障检测"；§4.5 新增 **repair 次数上限**一节 |
@@ -669,5 +881,34 @@ v1.3 起再加一条，防的是反方向的漂移——**文档说已经做完�
 判别 v1.2 与 v1.4 的关键不是"说没说已实现"，而是**有没有附证据**：
 v1.2 只写结论，v1.4 附了文件位置、测试文件名和端到端时序。
 **读到"已实现"却找不到证据表的，就是拿错了版本。**
+
+v1.5 起再加一条，防的是**第三种**漂移——**有证据表，但证据表证的不是契约条款**：
+
+| 特征 | v1.4（已废弃） | v1.5 起（权威） |
+| --- | --- | --- |
+| 证据表的每一行对应什么 | 一个**组件 / 一条链路**（"服务端 handler"、"前端进度展示"、"端到端时序"） | 一个**契约小节编号**（§1③ / §4.4 / §4.5 / §7 / §9.1 …） |
+| 状态行是否声称"全部兑现" | 是（"两侧均已实现"） | 否——"链路已通"与"条款兑现"分开陈述，未兑现的逐条列出 |
+| 正文里有没有 ⚠️ 缺口框 | 没有 | 有，且**每个缺口框注明性质**（实现待办 / 契约要改） |
+
+### 自检表（改状态行之前逐条过一遍）
+
+前两次翻车各留下一条规则，v1.4 留下第三条。**改状态行的人必须自己走完这五步，
+走不完就不许把状态行往"已实现"的方向改。**
+
+| # | 规则 | 从哪一版学到的 | 怎么算过 |
+| --- | --- | --- | --- |
+| 1 | **结论必须附证据**：文件路径:行号 / 测试文件名 / 可重跑的命令 | v1.2（只写结论，虚报活了一版） | 每条结论旁边都有一个别人能自己跑一遍的东西 |
+| 2 | **证据必须指向真实提交**，不是本地未提交的改动、也不是"打算这么写" | v1.3（§8.1 引用的原文从未进过任何提交） | 引用的每处代码都能在远端 `git log -S` 里查到 |
+| 3 | **两侧都要核**，一侧的实现不能推定另一侧 | v1.3（服务端与调用方分别虚报过） | 服务端与调用方各自的证据分开列 |
+| 4 | **⚠️ 证据表必须逐条对应契约条款编号，不是对应"端到端跑通了"。** 一行证据必须能回答"§X 那一条，代码里在哪、值是多少"；只能回答"整条链路能跑"的，不算条款证据 | **v1.4（这一条是新的）** | 证据表的第一列是**小节编号**；把表里每一行的小节号抄下来，与正文里带**数值、字段名、状态映射**的条款对照，**没有被任何一行覆盖的条款，一律按"未核实"处理，不许按"应该没问题"处理** |
+| 5 | **机器能校验的部分交给机器**：形状类断言写进 `schema/` + `fixtures/`，不靠人读文档 | v1.5（前四条全是人肉规则，人肉规则会累） | `CONSUMER-TESTS.md` 里该条款有对应用例，且两侧 CI 都在跑 |
+
+> **第 4 条为什么值得单列。** v1.4 的证据表**不是假的**——12 个契约测试真的绿，
+> 端到端时序真的跑出来了。它的问题是**覆盖面**：链路跑通只要求事件流的形状对，
+> 于是所有"形状对但数值错"的条款（send 预算 45 而不是 90、`failed_steps>0` 却发
+> `completed`、九个 stage 只发八个、`database` 枚举与部署不符）全都从证据表的缝里漏了过去。
+>
+> **判别方法：拿证据表的行数去比契约里"带数值或字段名的条款"的条数。**
+> 前者远小于后者，就说明这张表证的是链路不是条款——无论它看起来多详实。
 
 判断顺序永远是：**先看状态行的版本号**，再对照本表。不要靠"我印象里新版加了什么"。
