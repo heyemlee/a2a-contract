@@ -46,7 +46,7 @@
 > | 条款 | 契约怎么写 | 代码实际是什么 | 证据（2026-04-28 复核） | 性质 |
 > | --- | --- | --- | --- | --- |
 > | §1③ / §5.1 | `message/send` 固定预算 **90s**（上线前 25s / 上线后 90s 两档） | 默认 **45s**——两档里都没有这个值 | `ai-helpdesk/backend/tools/a2a_client.py:80`（`send_timeout_s: float = 45.0`）、`:273-274`（env 默认 `"45"`，注释自承「上线后改 90」，没改） | 实现待办（**且契约要补第三档**，见 §1） |
-> | §4.4 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；`failed_steps > 0` 照发 `completed` | `ai_sql_a2a/server.py:277`（send 的 `failed` 只在 `except Exception` 里）、`:317`（stream 对 `done` 硬编码 `"completed"`）；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测见 §4.4 缺口框 | 实现待办（v1.5 §4.4 先把语义定清楚） |
+> | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约要改（本版已改：§4.4 改写为传输终态，业务终态另立 §4.6）+ 实现待办（`execution_status` 与三个汇总数仍未实现）** |
 > | §4.5 | 九个 stage **全发**（§9 #3 答复"全发"） | 发八个，**`normalization` 不在映射表里** | `ai_sql_a2a/server.py:41-50`（`_STAGE_MAP` 八条）、`:40`（注释自承「契约 §8.2 待办」）；根因 `ai_sql_pipeline/text2sql_pipeline.py:245-257` 仍是裸 `log_event("stage.normalization")` 且只在 `changed` 时记 | 实现待办 |
 > | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:56-58` | **契约要改**（枚举的稳定性承诺是假的） |
 > | §7 | `tasks/get` "多副本下会大概率 `-32001`" | **恒返回 `-32004`**，与副本数无关；服务端根本没有任务表 | `ai_sql_a2a/server.py:359-362`（`tasks/get` 与 `cancel`/`resubscribe` 同列在不支持表里）；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中 | **契约要改** |
@@ -369,20 +369,30 @@ N×  status-update     进度，final=false，state=working
 }
 ```
 
-`state` 取值与今天 `_task_from_query` 的判定**保持一致**，不新增语义：
+`state` 是**传输终态**，只回答"载荷有没有完整送达"，**不回答"查询成不成功"**
+（v1.5 改写，理由见 §4.6.8）：
 
-| state | 含义 |
-| --- | --- |
-| `completed` | 所有步骤成功（或走的是对话路径） |
-| `failed` | 任一步骤失败 / 执行出错 / 被拒 |
+| state | 含义（传输终态） | 什么时候发 |
+| --- | --- | --- |
+| `completed` | **载荷完整送达**：artifact 已发出，pipeline 正常返回。**不表示查询成功** | pipeline 未抛异常地跑完 |
+| `failed` | **没有可用载荷**：pipeline 抛异常、准入被拒、流中途出错（§5.2） | 只有这些情况 |
+
+> v1.0–v1.4 这张表写的是「`completed` = 所有步骤成功 / `failed` = 任一步骤失败」，
+> 那是**业务**终态的定义，被放进了一个**传输**字段。代码从来不是那样实现的，
+> 而且**也不该**那样实现——见 §4.6.8 的四条理由。
+
+**业务终态在 artifact 的 data part 里**，见 **§4.6**：`execution_status`（跑成什么样）、
+逐步骤 `success`、`degraded`、`has_risk`、`result_truncated`。
+**只读 `state` 判不出"查挂了"**——查询全挂时 `state` 照样是 `completed`。
 
 > `degraded=true`（模型不可用、走了历史 SQL 重放）**仍然是 `completed`**，降级标记在 artifact 的 data part 里。这与 `message/send` 今天的行为一致，不要在流式下改判。
 
-#### ⚠️ 缺口（v1.5）：上表的 `failed` 在代码里基本发不出来
+#### ⚠️ 缺口（v1.5）：业务终态在链路上根本没有字段承载
 
-**性质：实现待办。**
+**性质：契约要改（本版已改）+ 实现待办（仍然是缺口）。**
+判定过程与理由见 §4.6.8 末尾的「由此改判」。
 
-实际判据是「pipeline 有没有抛异常」，不是「有没有步骤失败」：
+**先说事实。** `state` 的实际判据是「pipeline 有没有抛异常」，不是「有没有步骤失败」：
 `ai_sql_a2a/server.py:277` 的 `failed` 只出现在 `except Exception` 分支里，
 `:317` 对正常结束的 `done` **硬编码** `"completed"`；
 `grep -n failed ai_sql_a2a/server.py` 全文只有这两处。
@@ -395,12 +405,17 @@ send   终态 state = completed     steps[0].success = False     data part 里�
 stream 终态 state = completed     task → 6×status-update → artifact-update → status-update(final)
 ```
 
-**SQL 跑失败了，调用方收到的仍然是 `completed`。** 按 §5.1「`final:true` + `completed`
-⟺ 成功」，这恰好就是本契约最想堵死的那件事——半个结果被当成成功。
+**SQL 全跑失败了，调用方收到的仍然是 `completed`，而且 `queried_database` 也是 `true`**
+（它的定义只是"产生了 pipeline result"，`ai_sql_pipeline/dynamic_service.py:34-36`）。
+两个字段都不否定，**调用方今天没有任何字段能发现这次查询挂了。**
 
-但这不只是一个实现 bug：**上表定义的是传输终态，调用方需要的是业务终态**，
-契约层从来没给过后者。所以 v1.5 不止标缺口，还在 **§4.6** 把业务终态语义补齐——
-不先定义清楚，调用方照着改也是改错方向。
+**但方向不是"把 `state` 改成 `failed`"。** 那样会让"2 步挂 1 步"按 §5.1 整段回落，
+把成功那半份真数据一起扔掉，比现状更糟。真正缺的是**业务终态这一层**——
+契约从来没给过。所以 v1.5 做了两件事：
+
+1. **改契约**：上表改写为传输终态（已完成），业务终态另立 **§4.6**；
+2. **留缺口**：§4.6 的 `execution_status` 与三个汇总数**还没实现**，
+   在它们发出来之前这个洞是敞开的。改判不降低紧迫性。
 
 ### 4.5 stage 映射表 ← **本文核心**
 
@@ -520,6 +535,216 @@ routing → retrieval → planning → generation → execution → validation
 - **内部有而契约不暴露的 stage**：`memory_context`（会话记忆读取，纯内部管道，对用户没有展示价值）。刻意不发，避免契约面无谓变大。
 - **`normalization` 在我方今天仍不是一个真正的 stage**（`ai_sql_pipeline/text2sql_pipeline.py:245-257` 一条裸 `log_event("stage.normalization", …)`，且只在 `normalization.changed` 为真时才记）。要发这个事件需要先把它变成真 `stage()`，见 §8.2 —— **v1.4 没做，见上面的缺口框。**（行号为 2026-04-28 复核值；v1.0 写的 `:216` 已漂移。）
 
+### 4.6 业务终态语义（v1.5 新增）
+
+§4.4 给的是**传输终态**：载荷有没有完整送达。调用方真正要判断的是**业务终态**：
+这份数据能不能拿去回答客户。今天契约层没有后者，于是每个消费端各自用
+`queried_database` + `answer` 非空拼一个近似判据出来——而这两个都不承载它被当成的含义：
+
+- `queried_database` 只表示"产生了 pipeline result"。定义就是一行：
+  `return self.pipeline_result is not None`（`ai_sql_pipeline/dynamic_service.py:34-36`）。
+  **SQL 全挂了它也是 `true`。**
+- `has_risk` 只汇总校验发现：`any(s.risk_findings for s in step_logs)`
+  （`ai_sql_api/result_summary.py:105`），与 `failed_steps`（`:93`）是两套互不相干的计数。
+- `answer` 非空只说明模型说了话，不说明它说的话有数据支撑。
+
+本节把业务终态定义清楚。**这是调用方修那条判据的前提**——不先定清楚，
+改出来的也是另一个近似判据。
+
+> **每个字段都标了「今天在不在线上」，请照着读：**
+> ✅ = 已在 artifact data part 里，本节只是补定义；
+> ➕ = 服务端已经算出来了但没放进 artifact，搬过去代价接近零；
+> 🔨 = 服务端今天没有这个概念，**先定义、后实现**，实现前按"未知"处置。
+
+#### 4.6.1 `execution_status`（🔨 新增，顶层，必填）
+
+一个闭集字符串，回答"这次查库到底跑成什么样"：
+
+| 值 | 含义 | 判据（全部可由现有 `steps[]` 算出） |
+| --- | --- | --- |
+| `not_applicable` | 本轮没查库，走的是对话路径 | `route != "database_query"` |
+| `success` | 所有步骤成功，且合计返回了行 | `all(s.success)` 且 `sum(row_count) > 0` |
+| `no_data` | 所有步骤都成功执行，但合计零行 | `all(s.success)` 且 `sum(row_count) == 0` |
+| `partial_success` | 有成功也有失败 | `any(s.success)` 且 `any(not s.success)` |
+| `failed` | 一步都没成 / 查库路径却没有步骤 | `not any(s.success)`，含 `steps == []` |
+
+**`no_data` 与 `failed` 必须分开。** 前者是"查到了，答案是没有"，后者是"没查成"。
+对客户是两句完全不同的话，而今天调用方分不出来——它只判 `answer` 空不空
+（`ai-helpdesk/backend/api/main.py:1045`），两种情况都落进同一个分支。
+
+**`partial_success` 为什么不能并进 `failed`。** 跨库查询 2 步挂 1 步时，
+成功那步的数据是真的、可用的。按 §5.1 判 `failed` 会让调用方整段回落，
+**把那半份真数据一起扔掉**——比现状更糟。它需要的是第三个值。
+
+#### 4.6.2 逐步骤成功 / 失败（✅ 已在线上，本节补定义）
+
+`steps[]` 的每一项，字段与取值域：
+
+| 字段 | 类型 / 取值域 | 状态 | 证据 |
+| --- | --- | --- | --- |
+| `database` | 见 §4.5 的 `database` 契约面 | ✅ | `ai_sql_api/result_summary.py:26` |
+| `success` | boolean，**严格布尔**（不接受 `"true"` / `1`） | ✅ | `result_summary.py:28`、`:83` |
+| `row_count` | integer ≥ 0 | ✅ | `result_summary.py:29` |
+| `truncated` | boolean | ✅ | `result_summary.py:30` |
+| `error` | string \| null；`null` ⟺ `success == true` | ✅ | `result_summary.py:33` |
+| `final_sql` | string，**实际执行的那条**（修复后的） | ✅ | `result_summary.py:27` |
+| `repair_attempts` | array，长度 ≤ `max_repair_attempts`（默认 2，§4.5） | ✅ | `result_summary.py:34` |
+| `risk_findings` | array；非空 ⟺ 该步对 `has_risk` 有贡献 | ✅ | `result_summary.py:35`、`:105` |
+
+三个汇总数，**调用方不应自己 reduce**（reduce 的口径会漂）：
+
+| 字段 | 类型 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| `succeeded_steps` | integer ≥ 0 | ➕ | 服务端有等价量，搬一下即可 |
+| `failed_steps` | integer ≥ 0 | ➕ | `result_summary.py:93` 已算好，只是没进 artifact（对比 `ai_sql_a2a/server.py:203-211`） |
+| `repaired_steps` | integer ≥ 0 | ➕ | `result_summary.py:94` |
+
+> 三个数与 `steps[]` **必须自洽**：`succeeded_steps + failed_steps == len(steps)`。
+> 不自洽时调用方以 `steps[]` 为准，并按"数据可疑"处置。
+
+#### 4.6.3 结果截断（✅ 一半在线上）
+
+链路上有**两道**截断闸，语义不同，排查时必须能分开：
+
+| # | 谁截的 | 字段 / 配置 | 状态 |
+| --- | --- | --- | --- |
+| 1 | 我方按行截 | `steps[i].truncated`；上限 `max_rows` 默认 **10000**（`ai_sql_core/settings.py:261`） | ✅ |
+| 2 | 调用方按字符截 | `SQL_AGENT_MAX_CONTEXT_CHARS` 默认 **2000**（`ai-helpdesk/backend/api/main.py:1052`） | 调用方侧，**不是契约面**，写在这里只为提醒排查时有两道闸 |
+
+新增两个字段：
+
+| 字段 | 类型 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| `result_truncated` | boolean，顶层 = `any(s.truncated)` | ➕ | 让调用方一跳拿到，不用遍历 `steps[]` |
+| `steps[i].row_limit` | integer \| null | 🔨 | 被哪个上限截的。`truncated == true` 时**必须**有值——否则调用方无法判断"10000 行封顶"还是"被临时调小的上限截了" |
+
+**截断的表述后果**：`truncated == true` 时，任何"共有 N 条 / 全部 / 一共"的说法都不成立。
+调用方必须把它当成"至少 N 条"，且**不得**基于截断结果做求和、计数、比例类断言。
+
+#### 4.6.4 数据时点 `as_of`（🔨 服务端今天没有）
+
+| 字段 | 类型 / 取值域 | 说明 |
+| --- | --- | --- |
+| `as_of` | RFC 3339 字符串 \| `null` | 这份数据代表的业务时点 |
+| `as_of_source` | `"query_time"` \| `"snapshot"` \| `"unknown"` | 时点是怎么来的 |
+
+- `"query_time"`：读的是主库当前状态，`as_of` = SQL 执行时刻。今天所有查询都属于这一类。
+- `"snapshot"`：读的是快照 / 数仓 / 只读副本，`as_of` = 快照时点，**可能显著早于现在**。
+- `"unknown"` 或字段缺失：**不可信**。
+
+**现状：服务端完全没有这个概念**——`grep -rn "as_of\|as-of\|data_timestamp\|snapshot_at" ai-sql-agent`
+（排除 `.venv`）无命中。所以本节定义的是目标形态。
+
+**实现之前的处置（这一条现在就生效）：** `as_of` 为 `null` / 缺失时，
+调用方**不得**向客户表述任何时点（"截至今天""目前""最新"）。
+今天之所以还没出事，是因为查的都是主库；接了只读副本或数仓之后，
+主从延迟会让"最新状态"变成几分钟到几小时前的状态，而链路上**没有任何字段能让调用方发现这件事**。
+
+#### 4.6.5 币种与单位（🔨 服务端今天没有，且已经在被绕过）
+
+| 字段 | 类型 / 取值域 | 说明 |
+| --- | --- | --- |
+| `currency` | ISO 4217 三字母大写（`"USD"`）\| `null` | 顶层：本轮金额列的币种。多币种时留 `null`，逐列在下面给 |
+| `steps[i].column_units` | object：列名 → 单位标识 \| 不出现 | 例：`{"contract_amt": "USD", "qty": "EA", "lead_time_days": "day"}` |
+
+**这一条有现成的证据说明它为什么必须进契约。** 服务端不返回币种
+（`grep -rn currency ai_sql_pipeline/ ai_sql_api/ ai_sql_semantic/` 无命中），
+于是调用方在**自己那边配了一个全局常量**把它补上：
+`SQL_AGENT_CURRENCY` 环境变量（`ai-helpdesk/backend/tools/sql_agent_client.py:151`），
+再往 prompt 里塞一句"以上金额的币种是 X"（`backend/api/main.py:1073-1080`）。
+那段注释把风险写得很清楚：
+
+> 下游只返回数字不返回币种，不点明的话中文回答会默认写成「元」——
+> 接美国厂的库时，报给 builder 的金额就带了错误的币种。
+
+**这是一个跨仓库配置在替契约打补丁。** 币种是**数据的属性**，不是调用方的属性：
+一个 ai-sql-agent 接多个库、或一个库里同时有 USD 与 CNY 列时，
+那个全局常量**必然**给出错误答案，而且是静默的——报出去的金额看起来完全正常。
+
+- `currency` / `column_units` 缺失或 `null` → 调用方**不得**擅自补币种符号或单位，
+  只能原样呈现数字并说明单位未知。**不得**回退到自己的全局常量。
+- 自然的数据源是语义层 YAML（`ai_sql_semantic`），那里今天也没有 `unit` 键——
+  一并算在 🔨 里。
+
+#### 4.6.6 来源记录标识（🔨 服务端今天没有）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `steps[i].source_records` | array \| 不出现 | 每项：`{"database": "erp_db", "table": "job", "key_columns": ["job_no"], "keys": ["J25-00003"]}` |
+
+用途：把"客服说的这句话"追回到**哪几条业务记录**。
+今天能追到的最细粒度是一次**查询**（`trace_id`），追不到一条**记录**——
+出了纠纷要复盘"这个日期是从哪条单子读出来的"，只能拿 `final_sql` 回去重跑，
+而重跑得到的是**今天**的数据，不是当时的数据。
+
+**实现之前的处置：** `trace_id` + `steps[i].final_sql` 是唯一可用的溯源手段
+（两者今天都已经在 data part 里：`ai_sql_a2a/server.py:209`、`result_summary.py:27`）。
+调用方至少要把这两个记进自己的会话日志——`trace_id` 今天已经记了
+（`ai-helpdesk/backend/api/main.py:1059`），`final_sql` 没有。
+
+#### 4.6.7 缺失与未知的统一处置：**缺失 = 不可信，不是默认 `false`**
+
+本节所有字段共用一条规则：
+
+| 字段 | 缺失 / 未知 / 类型不对时，按什么处置 |
+| --- | --- |
+| `execution_status` | **`failed`** |
+| `steps[i].success` | **`false`** |
+| `steps[i].truncated` / `result_truncated` | **`true`** |
+| `steps[i].row_limit`（当 `truncated == true`） | 视为截断上限未知 → 禁止任何总量表述 |
+| `has_risk` | **`true`** |
+| `degraded` | **`true`** |
+| `queried_database` | **`false`** |
+| `as_of` / `as_of_source` | 禁止表述时点 |
+| `currency` / `column_units` | 禁止补币种与单位 |
+| `source_records` | 退回 `trace_id` + `final_sql` 溯源 |
+
+> **为什么这条规则要单独写一节。** 上面每一个字段的作用都是**降低**信任。
+> 一个"降低信任的信号"缺席时，若按"没有这个信号"处理，等于默认信任——
+> 于是**任何序列化 bug、版本错配、字段改名，都会静默地把不可信数据升级成可信数据**。
+> 这不是假想：§9.1 的缺口就是这个模式的实例（`bool(data.get("has_risk", False))`
+> 把"字段没送到"翻译成了"没有风险"）。
+>
+> 严格布尔同理：`"false"` 是一个非空字符串，`bool("false")` 为真。
+> 三个信任布尔**必须是 JSON 布尔**，类型不对按上表处置，不做宽容转换。
+> 机器可校验的版本见 `schema/artifact-data-part.schema.json`。
+
+#### 4.6.8 `degraded` 与 `completed` 的关系：**保留，但 `state` 的含义要写清楚**
+
+**结论：保留。`degraded == true` 仍然是 `state: "completed"`。** 四条理由：
+
+1. **A2A 0.2 的 `TaskState` 里没有"部分成功"这个值。** 把 `partial_success` 或
+   `degraded` 硬压成 `failed`，按 §5.1 调用方会整段回落，
+   连同那份通常是正确的历史重放结果一起扔掉。
+2. **`state` 是协议层字段，通用 A2A 客户端只读它。** §6.1 承诺"通用 A2A 客户端库…
+   能正确解析"。把业务语义压进 `state`，等于让一个协议字段的含义随业务规则漂。
+3. **两条 transport 必须同构（§4.4）。** 动 `state` 的判定会同时改 `message/send`，
+   而 send 是 §6.2 的回滚落点——回滚路径的行为不该被一次业务语义变更牵动。
+4. **`degraded` 的信息量在于"为什么可能不准"，不在于"成没成功"。** 历史 SQL 重放
+   是一个完整、可用、但可能过期的结果。判 `failed` 会丢掉它，判成无差别的
+   `completed` 又会让它被当成新鲜数据。它需要的是第三种表达——那就是 data part 里的
+   `degraded` + `degrade_reason`（两者今天都已在线上：`ai_sql_a2a/server.py:206-207`）。
+
+**保留就必须回答：调用方靠什么区分。** 靠下表，四个问题读四组字段：
+
+| 调用方要判断的 | 读什么 | 今天可用？ |
+| --- | --- | --- |
+| 载荷是否完整送达 | `final:true` 且 `status.state == "completed"`（§5.1） | ✅ |
+| 查询是否真的跑成了 | `execution_status` | 🔨（今天只能自己 reduce `steps[].success`） |
+| 数据是否新鲜 | `degraded` + `degrade_reason` + `as_of` | 前两个 ✅，`as_of` 🔨 |
+| 能不能当出处 | `execution_status ∈ {success, partial_success}` **且** `has_risk == false` **且** `degraded == false` | 见 §9.1 缺口 |
+
+> #### 由此改判 §4.4 缺口的性质
+>
+> 把两层分清之后，「`failed_steps > 0` 仍发 `completed`」**不是实现 bug，
+> 是 §4.4 那张表写错了**——它拿传输终态的字段去描述业务终态。
+> 状态行缺口表里这一行的性质，据此由「实现待办」**改判为「契约要改 + 实现待办」**：
+>
+> - **契约要改（本版已改）**：§4.4 的 `state` 表改写为传输终态，业务终态指向本节；
+> - **实现待办（仍然是缺口）**：`execution_status` 与 4.6.2 的三个汇总数要真的发出来。
+>   在它们发出来之前，调用方**没有任何字段**能区分"查成了"和"查挂了"——
+>   `queried_database` 两种情况下都是 `true`。**这一条的紧迫性没有因为改判而降低。**
+
 ---
 
 ## 5. 失败与回落（超时预算）
@@ -529,6 +754,13 @@ routing → retrieval → planning → generation → execution → validation
 > **收到 `final:true` 且 `state:"completed"` 的终态事件 ⟺ 成功。其余一切情况都回落。**
 
 这条是硬规则，用来兑现事实③里的"不能留下半个结果被当成成功"。
+
+> **v1.5 补一句边界，不改这条规则本身。** 上面这条判的是**传输**：
+> "这次委派有没有把一份完整载荷交到你手上"。它**不判数据可不可信**——
+> `state == "completed"` 时查询可能全挂、结果可能被截断、数据可能来自历史重放。
+> 拿到 `completed` 之后还要过**业务**那道判据，见 §4.6。
+>
+> 一句话：**`completed` 是"可以开始判断"，不是"判断完了"。**
 
 具体地，以下**都不是**成功，调用方必须回落到静默降级（今天的"请提供订单号"）：
 
