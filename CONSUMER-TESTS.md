@@ -12,22 +12,31 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 所以形状类的断言全部搬到 `schema/` + `fixtures/` 里，两侧 CI 各自跑同一组。
 用例分叉就是副本漂移换个地方复发，所以**清单只有一份**：`fixtures/index.json`。
 
-## 一条硬规则：两条 transport 用同一组用例
+## 一条硬规则：**三个**承载者用同一组用例（v1.8：由两条改为三条）
 
-`message/send` 与 `message/stream` 的 artifact **完全同构**（§4.4）。
-这不是一句愿望——它是 §6.2 回滚能成立的前提：回滚落在 send 上，
-如果 send 的载荷和 stream 不一样，回滚就是静默降级。
+三个承载者的 data part **完全同构**（§4.4.1）。这不是一句愿望——它是 §6.2
+回滚能成立的前提：回滚会依次落在 `send` 和直连 `/query` 上，
+任何一个的载荷和 `stream` 不一样，回滚就是静默降级。
 
-所以 **A / B / C / D 四组用例必须在两条 transport 上各跑一遍**，用同一份 fixture、
+所以 **A / B / C / D 四组用例必须在三个承载者上各跑一遍**，用同一份 fixture、
 同一份断言。差别只在**从哪里把 data part 取出来**：
 
-| transport | data part 在哪 |
+| 承载者 | data part 在哪 |
 | --- | --- |
 | `message/send` | `result.artifacts[0].parts[]` 里 `kind == "data"` 那一项的 `.data` |
 | `message/stream` | `artifact-update` 事件的 `result.artifact.parts[]` 里同样那一项 |
+| **`POST /query`（直连）** | 响应体顶层。**注意 `step_logs` ↔ `steps` 的过渡期**：服务端两个都发，调用方两个都认、`steps` 优先（§4.4.1） |
 
-> 取出来之后的一切断言必须逐字相同。**如果你发现某组用例只能在一条 transport 上跑，
+> **`/query` 是 v1.8 才纳入的**，而它是今天 `SQL_AGENT_TRANSPORT` 的默认值——
+> 也就是说在此之前，**跑生产流量的那条路一直没有契约用例覆盖**。
+> 优先把它接上，它的缺陷（`step_logs` 取不到 ⇒ 每次查询都不作出处）是静默的。
+
+> 取出来之后的一切断言必须逐字相同。**如果你发现某组用例只能在一个承载者上跑，
 > 那就是 §4.4 的同构承诺出问题了，去查同构，不要给用例开分支。**
+>
+> E / F 两组（progress 事件、事件顺序与终态）只适用于 A2A 那两条——
+> `/query` 是同步无事件的，没有进度事件可言。这是范围差异，不是同构破例，
+> 界线见 §4.4.1 末段。
 
 ## 用例分组
 
@@ -173,7 +182,7 @@ python3 tools/check_contract.py
 引用时钉在 tag 上，不要跟 `main`：
 
 ```bash
-git clone --depth 1 --branch v1.7 <a2a-contract 仓库地址> .contract
+git clone --depth 1 --branch v1.8 <a2a-contract 仓库地址> .contract
 ```
 
 ## 这份文件没有覆盖什么

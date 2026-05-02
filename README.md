@@ -29,7 +29,7 @@
 在代码注释或文档里引用时，写清楚**引的是哪一版**：
 
 ```python
-# 契约见 a2a-contract 仓库的 a2a-streaming-contract.md（v1.5，tag v1.5 / commit <sha>）
+# 契约见 a2a-contract 仓库的 a2a-streaming-contract.md（v1.8，tag v1.8 / commit <sha>）
 ```
 
 **只写版本号不够，只写 `main` 更不行。** 版本号会被下一版顶掉，`main` 会动；
@@ -38,7 +38,7 @@
 CI 里取 fixtures / schema 时钉在 tag 上：
 
 ```bash
-git clone --depth 1 --branch v1.5 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.8 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 或加成 submodule（submodule 天然钉在 commit 上，最省心）：
@@ -75,6 +75,9 @@ CI 在 push / PR / 打 tag 时自动跑同一条命令，见
 
 | tag | 状态行 |
 | --- | --- |
+| `v1.8` | 把 `/query` 纳入契约（它是今天的默认路径，此前一直在保护范围外）；§4.6.5 币种改为按来源三分 |
+| `v1.7` | 两侧各实现一轮，暴露出契约自己的三个错——先改错，再记进度 |
+| `v1.6` | 两个双边决定落地：send 补第三档、`database` 由钉死枚举改为形状 + 清单 |
 | `v1.5` | 链路已通；七条条款未兑现，逐条在正文标了 ⚠️ 缺口 |
 
 > v1.0–v1.4 没有 tag（这个仓库到 v1.5 之前是零 tag，而附录 B 却要求引用时带 commit——
