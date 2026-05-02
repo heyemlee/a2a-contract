@@ -18,17 +18,39 @@
   "$defs": {
     "contract-declared": {
       "$comment": "§4.5 表里声明的九个。§9 #3 的答复是「全发」。",
-      "enum": ["normalization", "routing", "retrieval", "planning", "generation",
-               "execution", "repair", "validation", "answering"]
+      "enum": [
+        "normalization",
+        "routing",
+        "retrieval",
+        "planning",
+        "generation",
+        "execution",
+        "repair",
+        "validation",
+        "answering"
+      ]
     },
     "emitted-2026-09-04": {
-      "$comment": "服务端当前实际发得出来的八个。normalization 不在 _STAGE_MAP 里（ai_sql_a2a/server.py:41-50），根因见 §4.5 的缺口框。断言「实发集合」的用例用这个子集，不要用 contract-declared。",
-      "enum": ["routing", "retrieval", "planning", "generation",
-               "execution", "repair", "validation", "answering"]
+      "$comment": "ai-sql-agent 在 commit e68e127（v1.6 复核时的 HEAD）实际发出的八个，缺 normalization。【v1.7 更新】ai-sql-agent 已把 normalization 补成真 stage(_STAGE_MAP 九条齐全)，2026-04-28 在其工作树中核实，但**尚未提交**——所以这一组仍按最后一个已提交状态记 8 个。对方提交后，这一组应更新为九个（或改名 emitted-<新日期> 并保留本组做历史），契约 §4.5 的 normalization 缺口随之关闭。",
+      "enum": [
+        "routing",
+        "retrieval",
+        "planning",
+        "generation",
+        "execution",
+        "repair",
+        "validation",
+        "answering"
+      ]
     },
     "repeatable": {
       "$comment": "会按 step 重复出现的 stage（§4.5「会重复？」列）。repair 额外受「每个 step 至多一次」约束。",
-      "enum": ["generation", "execution", "repair", "validation"]
+      "enum": [
+        "generation",
+        "execution",
+        "repair",
+        "validation"
+      ]
     }
   }
 }
