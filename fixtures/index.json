@@ -1,7 +1,7 @@
 {
   "$comment": "跨仓库 golden fixtures 的清单。两侧 CI 都读这个文件，不要各自维护一份用例表——用例表分叉就是副本漂移的老毛病换个地方复发。字段含义见 fixtures/README.md 与 CONSUMER-TESTS.md。",
   "contract": "a2a-streaming-contract.md",
-  "contract_version": "v1.8",
+  "contract_version": "v1.9",
   "cases": [
     {"id": "dp-valid-01", "group": "A", "file": "data-part/valid/01-success-single-step.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
@@ -82,6 +82,11 @@
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
      "trust": "no_data",
      "why": "查成功了，零行。必须与 failed 分开——「查到了，答案是没有」和「没查成」对客户是两句不同的话（§4.6.1）"},
+
+    {"id": "dp-trust-07", "group": "C", "file": "data-part/trust-negative/07-failed-step-with-status.json",
+     "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
+     "trust": "not_usable",
+     "why": "与 dp-trust-01 同一份载荷，但**带着** execution_status。两条一起构成 §4.6.7 过渡判据的完整覆盖：01 走推导路径（status_source=derived），07 走契约路径（status_source=contract）。两条都必过——进度标记不挂在 fixture 上，见 CONSUMER-TESTS 的 C 组"},
 
     {"id": "pe-valid-01", "group": "E", "file": "progress-event/valid/01-routing.json",
      "schema": "schema/progress-event.schema.json", "expect": "valid", "trust": "n/a",

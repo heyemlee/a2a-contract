@@ -90,23 +90,36 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 | `05-truncated` | 数据可用，但**禁止任何总量表述**（"共有 N 条""全部""一共"） |
 | `06-no-data` | 与 `failed` **分开**。"查到了，答案是没有" ≠ "没查成" |
 
-**`01-failed-step` 是这一组的核心，但它要拆成两条断言（v1.7 改）。**
+**`01-failed-step` 这一条被改过两次，v1.9 是第三次——把前两次的错都改掉。**
 
-v1.6 的指示是"这条用例应当是红的，标 `xfail`"。**那条指示写错了**，
-两侧独立实现时都发现并各自绕开了：这份 fixture 带着完整的 `steps[]`，
-而 `steps[]` 今天就在线上，所以按 §4.6.7 的过渡判据，
-**业务结论今天就能判对**——标 `xfail` 会 XPASS。
+- **v1.6 说"这条用例应当是红的，标 `xfail`"** —— 错。这份 fixture 带着完整的
+  `steps[]`，按 §4.6.7 的过渡判据业务结论今天就能判对，`xfail` 会 XPASS。
+- **v1.7 改成"业务结论必过 + 判定来源标 `xfail(strict=True)`"** —— **还是错，而且错得更隐蔽**：
+  那条断言的输入是这份 fixture，而 fixture **没有 `execution_status` 字段**，
+  是一份冻结的载荷。服务端上线之后真实流量的 `status_source` 会变成 `contract`，
+  **但这份 fixture 永远是 `derived`**。于是 `xfail(strict=True)` 永远不 XPASS，
+  "摘掉它"这个条件**永远不成立**。两侧实现时都撞上了，服务端把它写进了反馈。
 
-拆成两条，两条都不许放宽：
+**根因（值得记住）：fixture 是"契约长什么样"的样本，不该同时承担
+"实现做到哪一步"的进度标记。** 两件事绑在同一份文件上，就是这次撞车的原因。
+一份冻结的载荷能证明判据对不对，永远证明不了服务端今天发了什么。
 
-| 断言 | 状态 | 断什么 |
-| --- | --- | --- |
-| 业务结论 | **必过，不是 xfail** | 不可作出处。这是客户看得见的那个安全属性，今天就该成立 |
-| 判定来源 | **`xfail(strict=True)`** | `status_source == "contract"`，即结论来自服务端下发的字段，不是调用方自己 reduce |
+### v1.9 的分法：按**断言对象**分，不是按断言内容分
 
-摘掉 xfail 的时机不变（服务端上线 `execution_status`），但它盯的东西更准：
-**缺口的实质不是"结论错"，是"结论由谁定义"**（§4.6.2 警告过 reduce 的口径会漂）。
-摘掉 `xfail` 的那个提交，仍然是那次改动"真的做完了"的判据。
+| 断言对象 | 用例 | 状态 | 断什么 |
+| --- | --- | --- | --- |
+| **fixture**（冻结载荷） | `dp-trust-01`（无 `execution_status`） | **必过** | ① 业务结论：不可作出处；② `status_source == "derived"`——**如实断言，这是正确期望，不是缺陷** |
+| **fixture** | `dp-trust-07`（同载荷 + `execution_status`） | **必过** | ① 业务结论相同；② `status_source == "contract"`。证明**两条路径都通** |
+| **自己真实产出的载荷** | 各侧自己写 | 服务端上线前 `xfail` | `status_source == "contract"`。服务端断言自己产出的 data part；调用方断言一次真实（或录制的）服务端响应 |
+
+**进度标记只能挂在第三行**——只有活载荷会随实现改变。前两行是判据的正确性，
+今天就该全绿，任何时候都不许放宽。
+
+### 缺口关闭的机器判据（不靠任何一侧的 xfail）
+
+`execution_status` 在 `schema/artifact-data-part.schema.json` 里由**可选提级为 `required`**
+（走 §6 契约变更），同时给现存 fixture 补上该字段。**那一个契约仓库的提交就是关闭证据**,
+`tools/check_contract.py` 能验，不依赖任何一侧的测试标记，也不会因为谁 rebase 而失效。
 
 ### D 组：`database` 标识符
 
@@ -182,7 +195,7 @@ python3 tools/check_contract.py
 引用时钉在 tag 上，不要跟 `main`：
 
 ```bash
-git clone --depth 1 --branch v1.8 <a2a-contract 仓库地址> .contract
+git clone --depth 1 --branch v1.9 <a2a-contract 仓库地址> .contract
 ```
 
 ## 这份文件没有覆盖什么
