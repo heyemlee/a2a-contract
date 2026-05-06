@@ -86,7 +86,17 @@
 > | ai-helpdesk | `enabled: true` | `active` | **0** |
 >
 > 三个仓库、包含一个**刚建刚推**的 workflow，GitHub 读到了却一次没执行。
-> 指向账号级 Actions 策略 / 计费，仓库里改不动。
+>
+> **2026-05-05 用 `gh workflow run` 手动触发，拿到了确切原因：**
+>
+> ```
+> HTTP 422: Actions has been disabled for this user.
+> ```
+>
+> 是**账号级禁用**，不是仓库设置（三个仓库的 repo 级 Actions 都是 `enabled: true`）。
+> 而且**不是计费问题**——三个仓库全是 public，public 仓库的 Actions 分钟数无限免费，
+> 不存在超额停用。剩下的可能是 GitHub 侧对账号施加的限制，
+> **没有自助开关，只能走 GitHub Support**。
 >
 > **所以实际采用的判据是：提交已推送（第三方可 fetch）+ 本机按各自 CI 入口复现全绿。**
 > 这比原判据弱——**它证明了检查内容是对的，没证明检查会被强制执行**。
