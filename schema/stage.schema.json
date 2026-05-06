@@ -31,7 +31,7 @@
       ]
     },
     "emitted-2026-09-04": {
-      "$comment": "ai-sql-agent 在 commit e68e127（v1.6 复核时的 HEAD）实际发出的八个，缺 normalization。【v1.7 更新】ai-sql-agent 已把 normalization 补成真 stage(_STAGE_MAP 九条齐全)，2026-04-28 在其工作树中核实，但**尚未提交**——所以这一组仍按最后一个已提交状态记 8 个。对方提交后，这一组应更新为九个（或改名 emitted-<新日期> 并保留本组做历史），契约 §4.5 的 normalization 缺口随之关闭。",
+      "$comment": "历史：ai-sql-agent 在 commit e68e127 实际发出的八个，缺 normalization。保留做对照，不要删——它是 §4.5 那条缺口存在过的证据。",
       "enum": [
         "routing",
         "retrieval",
@@ -50,6 +50,20 @@
         "execution",
         "repair",
         "validation"
+      ]
+    },
+    "emitted-2026-09-08": {
+      "$comment": "当前：ai-sql-agent 的 8340323 把 normalization 补成真 stage()，九个契约 stage 全发。与 contract-declared 相等 ⇒ §4.5 那条缺口关闭。改这一组的提交就是关闭证据。",
+      "enum": [
+        "normalization",
+        "routing",
+        "retrieval",
+        "planning",
+        "generation",
+        "execution",
+        "repair",
+        "validation",
+        "answering"
       ]
     }
   }

@@ -88,12 +88,18 @@ def check_schemas() -> None:
     # 契约里点名的枚举必须真的在 schema 里，而不是只写在正文表格里
     stage = json.loads((SCHEMA_DIR / "stage.schema.json").read_text(encoding="utf-8"))
     declared = set(stage["$defs"]["contract-declared"]["enum"])
-    emitted = set(stage["$defs"]["emitted-2026-09-04"]["enum"])
-    if not emitted < declared:
-        fail("stage.schema.json: emitted-2026-09-04 必须是 contract-declared 的真子集")
+    was = set(stage["$defs"]["emitted-2026-09-04"]["enum"])
+    now = set(stage["$defs"]["emitted-2026-09-08"]["enum"])
+    # v1.10：§4.5 的 normalization 缺口关闭。守两条——历史组仍是真子集（它是缺口
+    # 存在过的证据，不许被"修"成九个），当前组必须等于 contract-declared。
+    if not was < declared:
+        fail("stage.schema.json: emitted-2026-09-04 是历史对照，必须仍是真子集")
+    elif now != declared:
+        fail(f"stage.schema.json: emitted-2026-09-08 必须等于 contract-declared，"
+             f"差集 {sorted(declared ^ now)}")
     else:
-        ok(f"stage 枚举：声明 {len(declared)} 个、实发 {len(emitted)} 个，"
-           f"差集 {sorted(declared - emitted)}（§4.5 缺口）")
+        ok(f"stage 枚举：声明 {len(declared)} 个、当前实发 {len(now)} 个，"
+           f"**相等 ⇒ §4.5 缺口已关闭**（历史对照组仍记着当初缺的 {sorted(declared - was)}）")
 
     db = json.loads((SCHEMA_DIR / "database-id.schema.json").read_text(encoding="utf-8"))
     current = set(db["$defs"]["current-2026-09-04"]["enum"])
