@@ -225,6 +225,33 @@ def check_links() -> None:
         ok(f"{doc.relative_to(ROOT)}")
 
 
+def check_version_consistency() -> None:
+    """
+    `fixtures/index.json` 的 `contract_version` 必须等于状态行的版本号。
+
+    **这条是补的一个洞。** v1.10 发布时状态行改了、`contract_version` 没跟着改，
+    停在 v1.9——而发现它的不是本脚本，是**下游仓库的**
+    `test_contract_version_is_the_one_we_pinned`：它按 tag 拉了 v1.10 的目录，
+    读出来的 `contract_version` 却是 v1.9。
+
+    下游按 `contract_version` 判断"我拉到的是不是我钉的那一版"。它漂了，
+    下游要么误判（拉到新版却以为是旧版），要么像这次一样报一条看起来像是
+    自己配错了的失败。CI 里已经有一条"状态行 == 附录 A 最新行"的检查，
+    漏的正是这第三处。三处必须一起对齐。
+    """
+    contract = (ROOT / "a2a-streaming-contract.md").read_text(encoding="utf-8")
+    status_line = next(ln for ln in contract.splitlines() if ln.startswith("> 状态："))
+    m = re.search(r"v\d+\.\d+", status_line)
+    declared = m.group(0) if m else ""
+    index_version = json.loads(
+        (ROOT / "fixtures" / "index.json").read_text(encoding="utf-8")
+    )["contract_version"]
+    if declared != index_version:
+        fail(f"版本不一致：状态行 {declared}，fixtures/index.json {index_version}")
+    else:
+        ok(f"版本一致：状态行与 fixtures/index.json 都是 {declared}")
+
+
 def main() -> int:
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     if which in ("all", "schema"):
@@ -233,6 +260,8 @@ def main() -> int:
         check_fixtures()
     if which in ("all", "links"):
         check_links()
+    if which == "all":
+        check_version_consistency()
     print()
     if failures:
         print(f"失败 {len(failures)} 项：")
