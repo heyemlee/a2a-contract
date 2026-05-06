@@ -9,6 +9,7 @@
     python3 tools/check_contract.py schema   # 只跑其中一段
     python3 tools/check_contract.py fixtures
     python3 tools/check_contract.py links
+    python3 tools/check_contract.py version
 
 依赖：jsonschema（links 段不需要）。
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTRACT = ROOT / "a2a-streaming-contract.md"
 SCHEMA_DIR = ROOT / "schema"
 FIXTURES = ROOT / "fixtures"
+README = ROOT / "README.md"
 
 failures: list[str] = []
 
@@ -62,7 +65,7 @@ def _registry():
 
 
 def check_schemas() -> None:
-    print("[1/3] schema 自校验")
+    print("[1/4] schema 自校验")
     cls = _validator_cls()
     files = sorted(SCHEMA_DIR.glob("*.schema.json"))
     if not files:
@@ -123,7 +126,7 @@ def check_schemas() -> None:
 # ── 2. fixtures 校验 ─────────────────────────────────────────────────────────
 
 def check_fixtures() -> None:
-    print("[2/3] fixtures 校验")
+    print("[2/4] fixtures 校验")
     cls = _validator_cls()
     registry = _registry()
     manifest_path = FIXTURES / "index.json"
@@ -197,7 +200,7 @@ def _headings(text: str) -> set[str]:
 
 
 def check_links() -> None:
-    print("[3/3] 文档内链接检查")
+    print("[3/4] 文档内链接检查")
     docs = sorted(p for p in ROOT.rglob("*.md") if ".git" not in p.parts)
     contract_text = CONTRACT.read_text(encoding="utf-8")
     headings = _headings(contract_text)
@@ -224,44 +227,186 @@ def check_links() -> None:
                 fail(f"{doc.relative_to(ROOT)}: 正文里点名的文件不存在 —— {target}")
         ok(f"{doc.relative_to(ROOT)}")
 
+# ── 4. 版本号一致性 ──────────────────────────────────────────────────────────
 
-def check_version_consistency() -> None:
+_VER_RE = re.compile(r"v\d+\.\d+")
+_CHANGELOG_ROW_RE = re.compile(r"^\|\s*(v\d+\.\d+)\s*\|")     # 契约附录 A 的变更记录表
+_README_ROW_RE = re.compile(r"^\|\s*`(v\d+\.\d+)`\s*\|")      # README 的版本表
+_PIN_RE = re.compile(r"--branch\s+(v\d+\.\d+)")               # 「钉在这个 tag 上」的示例
+_COMPANION_RE = re.compile(r"配套：[^\n]*?（(v\d+\.\d+)）")     # 「配套：…（vX.Y）」
+
+
+def _vkey(v: str) -> tuple[int, ...]:
+    """v1.11 > v1.9。按段比数值，不能按字符串比——字符串比会判 v1.9 更大。"""
+    return tuple(int(part) for part in v.lstrip("v").split("."))
+
+
+def _table_versions(text: str, row_re: re.Pattern) -> list[str]:
+    return [m.group(1) for m in (row_re.match(ln) for ln in text.splitlines()) if m]
+
+
+def _version_docs() -> list[Path]:
+    """所有可能写着「当前钉哪一版」的文件：文档 + workflow。"""
+    out: list[Path] = []
+    for pattern in ("*.md", "*.yml", "*.yaml"):
+        out += [p for p in ROOT.rglob(pattern) if ".git" not in p.parts]
+    return sorted(out)
+
+
+def _live_lines(path: Path, text: str) -> list[str]:
     """
-    `fixtures/index.json` 的 `contract_version` 必须等于状态行的版本号。
+    只留下**会被照着执行的行**，丢掉叙述历史的行。
 
-    **这条是补的一个洞。** v1.10 发布时状态行改了、`contract_version` 没跟着改，
-    停在 v1.9——而发现它的不是本脚本，是**下游仓库的**
-    `test_contract_version_is_the_one_we_pinned`：它按 tag 拉了 v1.10 的目录，
-    读出来的 `contract_version` 却是 v1.9。
+    因为这个仓库的文档大量在谈论旧版本——附录 A 的每一条变更记录、附录 B 的
+    漂移对照表、本脚本自己的注释，都会原样写出 `--branch v1.9` 这样的字符串。
+    照字面扫全文，写一条「v1.12 把 --branch v1.11 改成 v1.12」的变更记录就会
+    把自检搞红，而它明明是对的。**给下一个人留下这种陷阱，比不检查更糟。**
 
-    下游按 `contract_version` 判断"我拉到的是不是我钉的那一版"。它漂了，
-    下游要么误判（拉到新版却以为是旧版），要么像这次一样报一条看起来像是
-    自己配错了的失败。CI 里已经有一条"状态行 == 附录 A 最新行"的检查，
-    漏的正是这第三处。三处必须一起对齐。
+    判据是「这一行会不会被复制粘贴去执行」：
+      - Markdown：只认 ``` 围栏里的行（可复制的命令都在围栏里，叙述在围栏外）；
+      - YAML：只认非 `#` 注释行（注释是写给人看的，run: 是给机器跑的）。
     """
-    contract = (ROOT / "a2a-streaming-contract.md").read_text(encoding="utf-8")
-    status_line = next(ln for ln in contract.splitlines() if ln.startswith("> 状态："))
-    m = re.search(r"v\d+\.\d+", status_line)
-    declared = m.group(0) if m else ""
+    lines = text.splitlines()
+    if path.suffix in (".yml", ".yaml"):
+        return [ln for ln in lines if not ln.lstrip().startswith("#")]
+    live, inside = [], False
+    for ln in lines:
+        if ln.lstrip().startswith("```"):
+            inside = not inside
+            continue
+        if inside:
+            live.append(ln)
+    return live
+
+
+def _tag_exists(tag: str) -> bool | None:
+    """本地有没有这个 tag。取不到 git 信息就返回 None。"""
+    try:
+        proc = subprocess.run(
+            ["git", "tag", "--list", tag],
+            cwd=ROOT, capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return bool(proc.stdout.strip()) if proc.returncode == 0 else None
+
+
+def check_versions() -> None:
+    """
+    每一处「当前是哪一版」的声明，都必须等于状态行的版本号。
+
+    **这一段补过两次，两次的教训不一样。**
+
+    第一次（v1.10）补的是**一处**：状态行改了、`fixtures/index.json` 的
+    `contract_version` 没跟着改，停在 v1.9。发现它的不是本脚本，是**下游仓库的**
+    `test_contract_version_is_the_one_we_pinned`——它按 tag 拉了 v1.10 的目录，
+    读出来的版本号却是 v1.9。下游按这个字段判断「我拉到的是不是我钉的那一版」，
+    它漂了，下游要么误判，要么报一条看起来像是自己配错了的失败。
+
+    第二次（v1.11）补的是**范围**：`CONSUMER-TESTS.md` 开头那句
+    「配套：`a2a-streaming-contract.md`（v1.5）」**活过了 v1.6–v1.10 五个版本**，
+    同一份文件末尾的 `git clone --branch v1.9` 也是。而且 ai-helpdesk 早在 v1.6
+    就把前一条写进了交回契约的反馈清单——**写了，也没人改**。
+    原因不是谁不认真：**没有任何机器在看那两行**，而人肉规则会累。
+
+    所以这里不再逐个点名文件，改成按**形态**收全：凡是长得像「当前钉哪一版」的
+    地方——版本表最新行、`contract_version`、`--branch`、「配套：…」——一律与
+    状态行比。往后新加的文档只要沿用同样的写法，就自动被这条检查覆盖。
+    这正是附录 B 自检表第 5 条要求的：机器能校验的部分交给机器。
+    """
+    print("[4/4] 版本号一致性")
+    contract = CONTRACT.read_text(encoding="utf-8")
+
+    status_line = next(
+        (ln for ln in contract.splitlines() if ln.startswith("> 状态：")), None
+    )
+    if status_line is None:
+        fail("契约里找不到状态行（`> 状态：`）——它是附录 B 判别权威副本的第一道判据")
+        return
+    m = _VER_RE.search(status_line)
+    if not m:
+        fail(f"状态行里没有 vX.Y 版本号：{status_line[:60]}")
+        return
+    truth = m.group(0)
+    ok(f"状态行 = {truth}（下面全部与它比）")
+
+    # ① 两张版本表的最新行
+    for label, text, row_re in (
+        ("契约附录 A 变更记录", contract, _CHANGELOG_ROW_RE),
+        ("README 版本表", README.read_text(encoding="utf-8"), _README_ROW_RE),
+    ):
+        rows = _table_versions(text, row_re)
+        if not rows:
+            fail(f"{label}：一行版本号都没解析到——表格写法变了，这条检查已经悄悄失效")
+            continue
+        latest = max(rows, key=_vkey)
+        if latest != truth:
+            fail(f"{label}的最新行是 {latest}，状态行是 {truth}")
+        else:
+            ok(f"{label}最新行 = {latest}（共 {len(rows)} 行）")
+
+    # ② 下游真正读的那个字段
     index_version = json.loads(
-        (ROOT / "fixtures" / "index.json").read_text(encoding="utf-8")
+        (FIXTURES / "index.json").read_text(encoding="utf-8")
     )["contract_version"]
-    if declared != index_version:
-        fail(f"版本不一致：状态行 {declared}，fixtures/index.json {index_version}")
+    if index_version != truth:
+        fail(f"fixtures/index.json 的 contract_version 是 {index_version}，"
+             f"状态行是 {truth}——下游按这个字段判断拉到的是不是自己钉的那一版，"
+             f"漂了会红在下游，而不是红在这里")
     else:
-        ok(f"版本一致：状态行与 fixtures/index.json 都是 {declared}")
+        ok(f"fixtures/index.json contract_version = {index_version}")
+
+    # ③ 所有「让人钉哪一版」的写法
+    checked = 0
+    for doc in _version_docs():
+        text = doc.read_text(encoding="utf-8")
+        rel = doc.relative_to(ROOT)
+        # 「钉在这个 tag 上」的命令：只看会被照着敲的那些行
+        for pinned in sorted(set(_PIN_RE.findall("\n".join(_live_lines(doc, text))))):
+            checked += 1
+            if pinned != truth:
+                fail(f"{rel}: 示例让人钉 --branch {pinned}，当前是 {truth}")
+        # 「配套：…（vX.Y）」是文档抬头的写法，只在 Markdown 的引用行上成立
+        if doc.suffix == ".md":
+            for ln in text.splitlines():
+                if not ln.lstrip().startswith("> 配套："):
+                    continue
+                for companion in _COMPANION_RE.findall(ln):
+                    checked += 1
+                    if companion != truth:
+                        fail(f"{rel}: 抬头写着「配套：…（{companion}）」，当前是 {truth}")
+    if checked:
+        ok(f"钉版本的示例与「配套：」声明共 {checked} 处")
+    else:
+        fail("一处 --branch / 「配套：」都没扫到——写法变了，这条检查已经失效")
+
+    # ④ tag 存在与否**不作为失败判据**：发布提交总是先于打 tag，在发布分支上跑
+    #    自检时它本来就还不存在。但值得打印一行——v1.11 这一版的起因正是
+    #    「三处文档都在让下游钉 v1.11，而那个 tag 一直没有被创建」。
+    exists = _tag_exists(truth)
+    if exists is None:
+        print(f"  · tag {truth}：取不到 git 信息，跳过（不影响判定）")
+    elif exists:
+        ok(f"tag {truth} 本地已存在")
+    else:
+        print(f"  · tag {truth} 还没打，而文档已经在让下游钉它了。"
+              f"合入 main 后补 `git tag {truth}` 并推送（不作为失败判据）")
 
 
 def main() -> int:
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
+    known = ("all", "schema", "fixtures", "links", "version")
+    if which not in known:
+        print(f"未知的段名 {which!r}，可选：{', '.join(known)}", file=sys.stderr)
+        return 2
     if which in ("all", "schema"):
         check_schemas()
     if which in ("all", "fixtures"):
         check_fixtures()
     if which in ("all", "links"):
         check_links()
-    if which == "all":
-        check_version_consistency()
+    if which in ("all", "version"):
+        check_versions()
     print()
     if failures:
         print(f"失败 {len(failures)} 项：")

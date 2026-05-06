@@ -1,7 +1,11 @@
 # 两侧 CI 必须跑的契约用例
 
-> 配套：`a2a-streaming-contract.md`（v1.5）、`schema/`、`fixtures/`。
+> 配套：`a2a-streaming-contract.md`（v1.11）、`schema/`、`fixtures/`。
 > 本文只说**跑什么、断言什么**，不规定用什么测试框架。
+>
+> 上面这个版本号由 `tools/check_contract.py version` 与契约状态行比对。
+> **它曾经停在 v1.5 停了五个版本**（v1.6–v1.10），调用方在 v1.6 就把它
+> 写进交回契约的反馈清单，仍然没人改——因为当时没有任何机器在看这一行。
 
 ## 为什么要有这份文件
 
@@ -195,7 +199,7 @@ python3 tools/check_contract.py
 引用时钉在 tag 上，不要跟 `main`：
 
 ```bash
-git clone --depth 1 --branch v1.9 <a2a-contract 仓库地址> .contract
+git clone --depth 1 --branch v1.11 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 ## 这份文件没有覆盖什么
