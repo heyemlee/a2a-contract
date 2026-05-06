@@ -29,7 +29,7 @@
 在代码注释或文档里引用时，写清楚**引的是哪一版**：
 
 ```python
-# 契约见 a2a-contract 仓库的 a2a-streaming-contract.md（v1.8，tag v1.8 / commit <sha>）
+# 契约见 a2a-contract 仓库的 a2a-streaming-contract.md（v1.11，tag v1.11 / commit <sha>）
 ```
 
 **只写版本号不够，只写 `main` 更不行。** 版本号会被下一版顶掉，`main` 会动；
@@ -38,7 +38,7 @@
 CI 里取 fixtures / schema 时钉在 tag 上：
 
 ```bash
-git clone --depth 1 --branch v1.8 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.11 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 或加成 submodule（submodule 天然钉在 commit 上，最省心）：
@@ -75,6 +75,9 @@ CI 在 push / PR / 打 tag 时自动跑同一条命令，见
 
 | tag | 状态行 |
 | --- | --- |
+| `v1.11` | **契约面与 v1.10 逐字节相同**，只补一个自洽的版本号：tag `v1.10` 里 `contract_version` 停在 `v1.9`（三笔补正落在打 tag 之后），下游钉它会红一条版本断言。`v1.10` 已推送不能移动，所以补 tag 不移 tag。两侧 pin 由 `v1.8` 直接改到这里 |
+| `v1.10` | 七条缺口全部关闭；**判据是降级的**——原计划「两侧 CI 在 GitHub 上绿一次」一次都没发生（账号级 `Actions has been disabled for this user`），实际判据是「提交可推送复核 + 本机按 CI 入口复现全绿」。**⚠️ 这个 tag 的 `contract_version` 停在 `v1.9`，不要钉它，钉 `v1.11`** |
+| `v1.9` | `dp-trust-01` 的进度标记挂错了对象——fixture 断判据、活载荷断进度，两件事拆开；新增 `dp-trust-07` |
 | `v1.8` | 把 `/query` 纳入契约（它是今天的默认路径，此前一直在保护范围外）；§4.6.5 币种改为按来源三分 |
 | `v1.7` | 两侧各实现一轮，暴露出契约自己的三个错——先改错，再记进度 |
 | `v1.6` | 两个双边决定落地：send 补第三档、`database` 由钉死枚举改为形状 + 清单 |
