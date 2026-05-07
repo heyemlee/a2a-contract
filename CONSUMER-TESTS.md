@@ -56,7 +56,7 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 ### A 组：data part 正例
 
 **断言：** fixture 过 `schema/artifact-data-part.schema.json`；
-两条 transport 取出来的 data part 逐字相等。
+三个承载者（§4.4.1）取出来的 data part 逐字相等。
 
 - 服务端：真跑一次查询，把产出的 data part 拿去过 schema。**不要拿 fixture 反过来喂自己。**
 - 调用方：把 fixture 喂进 `_normalize()` 一类的归一函数，断言产出的三个布尔是**真布尔**且值正确。

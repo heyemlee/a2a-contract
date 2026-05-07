@@ -1,6 +1,29 @@
 # A2A 流式契约：`message/stream`
 
-> 状态：**v1.11，七条缺口全部关闭**——判据是「提交可复核 + 本机按 CI 入口复现全绿」，**不是「GitHub CI 绿过」**（那件事一次都没发生，原因见下）。
+> 状态：**v1.11，七条缺口里六条关闭、第七条差契约仓库这一侧的最后一步**——判据是「提交可复核 + 本机按 CI 入口复现全绿」，**不是「GitHub CI 绿过」**（那件事一次都没发生，原因见下）。
+>
+> **⚠️ 这一行是对 tag `v1.11` 的更正，尚未成版。** tag `v1.10` 与 `v1.11` 里写的都是
+> 「七条缺口**全部**关闭」，而 §4.4 那条并没有达成 v1.9 给它定下的**机器判据**。
+>
+> 判据原文是「`execution_status` 在 schema 里由可选提级为 `required`、现存 fixture
+> 补齐该字段，那一个提交就是证据」（附录 A 的 v1.9 行）。今天它仍在 `required` 之外：
+>
+> ```bash
+> python3 -c "import json;print(json.load(open('schema/artifact-data-part.schema.json'))['required'])"
+> # ['queried_database', 'has_risk', 'degraded', 'trace_id', 'route', 'steps']
+> ```
+>
+> 十七个 data-part fixture 里也只有 `dp-trust-07` 带这个字段。
+> **两侧的实现是真的合入了**（ai-helpdesk `40be899` → `main` = `e594655`；ai-sql-agent
+> 随 PR heyemlee/ai-sql-agent#1 合入 `main`，对应 `22060ee`），差的正是契约仓库这一侧——
+> 而判据当初**特意挪到这一侧**，图的就是「不依赖任何一侧的测试标记」。所以按附录 B
+> 自检表第 2 条，这条只能写「实现已合入、契约侧待提级」，**不能计进「全部关闭」**。
+>
+> **本次更正只动文字**：`schema/` 与 fixtures 一个字节没改，下游钉 `v1.11` 不受影响，
+> 这段随下一次发版一并成版。**提级本身是一次 §6 契约变更**（必填字段是硬门禁），
+> 要连着十六个 fixture 补字段、六个 schema 反例重新核对拒绝理由一起做——
+> 那六个反例今天各因一个特定理由被拒，多一条必填会让它们多一个被拒理由，
+> 「反例必须真的被拒」这条就得逐个重验。
 >
 > **v1.11 只做一件事：让「钉在 tag 上」这条规矩重新可执行。**
 > 契约面——`schema/` 与全部 fixture 载荷——与 v1.10 **逐字节相同**
@@ -23,6 +46,11 @@
 > 2026-04-28 回到两侧代码逐条复核，下表这些条款没有兑现。
 >
 > **v1.10：七条缺口全部关闭——但判据是降级的，这一点必须一起读。**
+>
+> > **2026-05-06 更正：上面这句说过头了，应为「六条关闭，第七条实现已合入、契约侧待提级」。**
+> > §4.4 那条的关闭判据是契约仓库自己的一个动作（`execution_status` 提级为 `required`），
+> > 那一步至今没做。理由与证据见本文开头的更正段。这句原文保留，是为了让
+> > 「v1.10 当时是这么写的」可追溯——附录 A 的 v1.10 行同理，不回改。
 >
 > 两侧的提交都推上去了，且**都已落到各自的默认分支**——ai-helpdesk `main`、
 > ai-sql-agent 的 PR heyemlee/ai-sql-agent#1 已**合入 `main`**（合入后对应 `22060ee`），
@@ -172,14 +200,19 @@
 >
 > ### 未兑现的条款（v1.5 新增，逐条对应小节编号）
 >
-> 每一条都在正文对应小节里就地标了 **⚠️ 缺口**，两处必须同时改，改完两处一起删。
+> 每一条都在正文对应小节里就地标了 **⚠️ 缺口**，两处必须同时改。
+>
+> **改法（2026-05-06 更正）：关闭时不删框，在框顶补一行「✅ 已关闭 + 证据」。**
+> 原文写的是「改完两处一起删」，而 v1.10 关闭七条时**只改了本表，正文四个框一个没动**，
+> 两处就此对不上，直到 2026-05-06 才发现。「一起删」既没人真去执行，
+> 删了也让「这里曾经是个缺口」不可追溯。留框加标记，两件事都解决。
 > 「性质」列区分两种完全不同的处置：**实现待办** = 契约的设计意图保留、代码要追上；
 > **契约要改** = 代码没错，是契约把事实写错了或写得过于绝对。
 >
 > | 条款 | 契约怎么写 | 代码实际是什么 | 证据（2026-04-28 复核） | 性质 |
 > | --- | --- | --- | --- | --- |
 > | §1③ / §5.1 | `message/send` 固定预算 **90s**（上线前 25s / 上线后 90s 两档） | 默认 **45s**——两档里都没有这个值 | `ai-helpdesk/backend/tools/a2a_client.py:80`（`send_timeout_s: float = 45.0`）、`:273-274`（env 默认 `"45"`，注释自承「上线后改 90」，没改） | ✅ **契约已改（v1.6）**：补第三档「已实现未承接流量 = 45s」，代码现值即合规值，**无需改代码**。新增待办：切档时外层工具超时（今天 47s）必须与 send 一起动 |
-> | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约已改（v1.5）+ 实现已就位待提交（v1.7）**：ai-sql-agent 已实现 `execution_status` 与三个汇总数（`ai_sql_api/result_summary.py` 的 `compute_execution_status`，`/query` 与 A2A 共用同一个 `data_part()`），ai-helpdesk 已按 §4.6.7 过渡判据消费（`backend/core/evidence.py`）。✅ **已关闭（v1.10）**：ai-helpdesk `main` = `e594655`（17 笔，已推送）；ai-sql-agent 的 12 笔已随 PR heyemlee/ai-sql-agent#1 **合入 `main`**（合入后对应 `22060ee`）。本机按各自 CI 入口复现：helpdesk 后端 **675 passed / 2 skipped / 1 xfailed** + 契约用例 **75 passed / 1 xfailed**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）。复现方法见下方「怎么重新验一遍」 |
+> | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约已改（v1.5）+ 实现已就位待提交（v1.7）**：ai-sql-agent 已实现 `execution_status` 与三个汇总数（`ai_sql_api/result_summary.py` 的 `compute_execution_status`，`/query` 与 A2A 共用同一个 `data_part()`），ai-helpdesk 已按 §4.6.7 过渡判据消费（`backend/core/evidence.py`）。🔸 **实现已合入（v1.10），契约侧待提级（2026-05-06 更正）**：ai-helpdesk `main` = `e594655`（17 笔，已推送）；ai-sql-agent 的 12 笔已随 PR heyemlee/ai-sql-agent#1 **合入 `main`**（合入后对应 `22060ee`）。本机按各自 CI 入口复现：helpdesk 后端 **675 passed / 2 skipped / 1 xfailed** + 契约用例 **75 passed / 1 xfailed**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）。复现方法见下方「怎么重新验一遍」。**但 v1.9 给这条定的机器判据——`execution_status` 提级为 `required`——还没做**，所以本行不写「已关闭」，理由见状态行的更正段 |
 > | §4.5 | 九个 stage **全发**（§9 #3 答复"全发"） | 发八个，**`normalization` 不在映射表里** | `ai_sql_a2a/server.py:41-50`（`_STAGE_MAP` 八条）、`:40`（注释自承「契约 §8.2 待办」）；根因 `ai_sql_pipeline/text2sql_pipeline.py:245-257` 仍是裸 `log_event("stage.normalization")` 且只在 `changed` 时记 | **实现已就位待提交（v1.7）**：`_STAGE_MAP` 已九条齐全，`text2sql_pipeline.py` 已改真 `stage()`。✅ **已关闭（v1.10）**：`8340323`（已随 PR #1 合入 `main`）。`schema/stage.schema.json` 的 `emitted-*` 已更新为九个——**改那个集合的这一次提交就是关闭证据**，`tools/check_contract.py` 现在断言实发集合等于 `contract-declared` |
 > | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:55-56` | ✅ **契约已改（v1.6）**：契约面降为形状 + 可拉取清单；`mes_db`→`prod_db` 改名、`pm_db` 删除（职责在 `erp_db`）、`svc_db` 补入。调用方那两个标签**追认为合规**，不再欠一次变更 |
 > | §7 | `tasks/get` "多副本下会大概率 `-32001`" | **恒返回 `-32004`**，与副本数无关；服务端根本没有任务表 | `ai_sql_a2a/server.py:359-362`（`tasks/get` 与 `cancel`/`resubscribe` 同列在不支持表里）；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中 | **契约要改** |
@@ -555,8 +588,15 @@ N×  status-update     进度，final=false，state=working
 
 #### ⚠️ 缺口（v1.5）：业务终态在链路上根本没有字段承载
 
-**性质：契约要改（本版已改）+ 实现待办（仍然是缺口）。**
+**性质：契约要改（本版已改）+ 实现待办。**
 判定过程与理由见 §4.6.8 末尾的「由此改判」。
+
+> **🔸 进度（2026-05-06 更正）：实现已合入，契约侧待提级——这个框还不能摘。**
+> 两侧代码都已合入 `main`（ai-helpdesk `40be899`、ai-sql-agent `22060ee`），
+> 但 v1.9 为这条缺口定下的关闭判据是一个**契约仓库自己的动作**——
+> `execution_status` 由可选提级为 `required`、现存 fixture 补齐该字段——**那一步还没做**。
+> 判据当初特意挪到这一侧，就是为了不依赖任何一侧的测试标记，所以不能拿两侧的
+> 合入记录来顶。详见状态行的更正段。
 
 **先说事实。** `state` 的实际判据是「pipeline 有没有抛异常」，不是「有没有步骤失败」：
 `ai_sql_a2a/server.py:277` 的 `failed` 只出现在 `except Exception` 分支里，
@@ -664,7 +704,16 @@ stream 终态 state = completed     task → 6×status-update → artifact-updat
 
 #### ⚠️ 缺口（v1.5）：九个 stage 里 `normalization` 没在发
 
-**性质：实现待办。** §9 #3 的答复是"全发"，实际发八个。
+> **✅ 已关闭（v1.10）。** `_STAGE_MAP` 已九条齐全（`8340323`，随 PR
+> heyemlee/ai-sql-agent#1 合入 `main`），`text2sql_pipeline.py`
+> 已改真 `stage()`。契约侧的关闭证据是**机器可验的**：`schema/stage.schema.json`
+> 的 `emitted-2026-09-08` 已是九个，`tools/check_contract.py` 现在断言
+> 「当前实发集合 == `contract-declared`」——**改那个集合的提交本身就是证据**。
+> 历史组 `emitted-2026-09-04`（八个）保留做对照，仍断言为真子集，**不许被「修」成九个**。
+>
+> 下面保留原文，是为了让「这里曾经是个缺口」可追溯（本框的留存规则见状态行下方的缺口表）。
+
+**性质：实现待办（v1.5 记，已于 v1.10 关闭）。** §9 #3 的答复是"全发"，实际发八个。
 
 `_STAGE_MAP`（`ai_sql_a2a/server.py:41-50`）只有八条，没有 `normalization`；
 `:40` 的注释自承「normalization 今天还不是真 stage（契约 §8.2 待办），所以不会出现」。
@@ -1241,7 +1290,8 @@ routing → retrieval → planning → generation → execution → validation
 
 > #### ⚠️ 缺口（v1.5）：上面第二条前提与代码不符
 >
-> **性质：契约要改。**
+> **性质：契约要改。✅ 已关闭（v1.5，本版即改）**——错的是论证前提，不是结论；
+> **结论「永久不做 delta」不变**，重新论证见 §7.2。下面保留原文可追溯。
 >
 > 实际是**两个都进**，不是"进 A 不进 B"：同一段 `order_text`
 >
@@ -1494,6 +1544,13 @@ python3 -c 'import os; print(min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
    > #### ⚠️ 缺口（v1.5）：这一条有三处不成立，其中一处方向反了
    >
    > **性质：(a)(b) 实现待办；(c) 契约要改。**
+   >
+   > **✅ 已关闭（v1.10）**：ai-helpdesk 新增 `backend/core/evidence.py`
+   > （`40be899`，已随 `main` 推送至 `e594655`）——`strict_bool()` 只认 JSON 布尔（治 b）、
+   > `assess()` 按 §4.6.7「缺失即不可信」处置（治 a）、`main.py` 的闸改为
+   > 风险/降级/缺字段一律不进 `grounding_sources`（治 c），三个承载者共用同一个 `assess()`。
+   > 本机复现：契约 B 组（缺字段 / 字符串布尔）与 C 组（形状合法但不可作出处）
+   > **75 passed / 1 xfailed**。下面保留原文可追溯。
    >
    > **(a) 缺字段不是"变成不可信"，两个字段是"变成可信"。**
    > `ai-helpdesk/backend/tools/a2a_client.py:250-266` 的 `_normalize()` 对三个字段

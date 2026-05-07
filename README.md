@@ -10,10 +10,12 @@
 | 路径 | 说明 |
 | --- | --- |
 | [`a2a-streaming-contract.md`](a2a-streaming-contract.md) | `message/stream` 流式契约。**唯一权威副本** |
-| [`CONSUMER-TESTS.md`](CONSUMER-TESTS.md) | 两侧 CI 各自必须跑的用例（A–F 六组，两条 transport 共用一组） |
+| [`CONSUMER-TESTS.md`](CONSUMER-TESTS.md) | 两侧 CI 各自必须跑的用例（A–F 六组，三个承载者共用一组） |
 | [`schema/`](schema/) | JSON Schema：artifact data part、progress 事件信封、`stage` 与 `database` 枚举 |
 | [`fixtures/`](fixtures/) | 跨仓库 golden fixtures：正例 + schema 反例 + 信任反例。清单在 `fixtures/index.json` |
-| [`tools/check_contract.py`](tools/check_contract.py) | 本仓库自检：schema 自校验 + fixtures 校验 + 文档内链接检查 + 版本号一致性。**四段判据只有这一个地方知道**，CI 只负责调它 |
+| [`fixtures/README.md`](fixtures/README.md) | fixtures 的目录约定：为什么 `trust-negative` 与 `schema-invalid` 分开放，各目录各是什么 |
+| [`tools/check_contract.py`](tools/check_contract.py) | 本仓库自检：schema 自校验 + fixtures 校验 + 文档内链接检查 + 版本号一致性。**四段判据只有这一个地方知道**，workflow 只负责调它 |
+| [`.github/workflows/contract.yml`](.github/workflows/contract.yml) | 调上面那条的 workflow。**它在 GitHub 上一次都没跑过**（账号级 Actions 停用，见下方「自检」），目前只是"CI 恢复后该跑什么"的记录 |
 
 ## 目录结构：**这几个路径是被下游硬编码的，不要重排**
 
@@ -22,8 +24,9 @@
 
 | 下游位置 | 它按死路径读的东西 |
 | --- | --- |
-| `ai-sql-agent/tests/test_contract_fixtures.py` | `schema/*.schema.json`、`fixtures/index.json`、`schema/database-id.schema.json`、`schema/stage.schema.json` |
-| `ai-helpdesk/backend/tests/test_contract_fixtures.py` | 同上；找不到仓库时退到**同级目录** `../a2a-contract` |
+| `ai-sql-agent/tests/test_contract_fixtures.py` | `schema/*.schema.json`、`fixtures/index.json`、`schema/database-id.schema.json`、`schema/stage.schema.json`。仓库位置按 `A2A_CONTRACT_DIR` → `./.contract` → **同级目录** `../a2a-contract` 的顺序找 |
+| `ai-helpdesk/backend/tests/test_contract_fixtures.py` | 同上；同样退到同级目录 `../a2a-contract`，找不到就 skip（设 `A2A_CONTRACT_REQUIRED=1` 才报错） |
+| `ai-helpdesk/scripts/ci-local.sh` | 本机复现 CI 的入口，同样读 `../a2a-contract`，并自带一个 `CONTRACT_TAG` |
 | 两侧 `.github/workflows/ci.yml` | `clone --branch <tag>` 之后读 `.contract/fixtures/index.json` |
 | 两侧代码注释 | "见 a2a-contract 仓库 `a2a-streaming-contract.md`" |
 
@@ -93,6 +96,15 @@ git submodule add https://github.com/heyemlee/a2a-contract.git .contract
 3. **打 tag（`vX.Y`）——这必须是这一版的最后一个动作。**
    tag 消息里写清这一版改了什么、哪些条款还是缺口；
 4. 两侧各自把引用里的版本号和 commit 换掉，并把新增/变更的用例接进自己的 CI。
+   pin 一共五处，漏一处就会在那一侧红一条版本断言：
+
+   | 仓库 | 在哪 |
+   | --- | --- |
+   | ai-sql-agent | `tests/test_contract_fixtures.py` 的 `CONTRACT_TAG`；`.github/workflows/ci.yml` 的 `A2A_CONTRACT_TAG` |
+   | ai-helpdesk | `backend/tests/test_contract_fixtures.py` 的 `PINNED_TAG`；`.github/workflows/ci.yml` 的 `ref`；`scripts/ci-local.sh` 的 `CONTRACT_TAG` |
+
+   改完怎么验，见契约状态行下方的「怎么重新验一遍」——三条命令加三个实测踩过的坑
+   （尤其是 ai-sql-agent 必须在没有 `.env` 的环境里跑）。
 
 第 4 步没做完之前，**不要在状态行里声称"两侧已实现"**——那正是 v1.2 和 v1.4
 各自栽过的地方。
@@ -137,16 +149,23 @@ python3 tools/check_contract.py version
 > Markdown 里 ``` 围栏内的行、YAML 里的非注释行。附录 A 的变更记录可以放心
 > 写"把 `--branch v1.11` 改成 `--branch v1.12`"，那是叙述，不会误报。
 
-CI 在 push / PR / 打 tag 时跑的就是不带参数的那一条，见
-[`.github/workflows/contract.yml`](.github/workflows/contract.yml)。
-**CI 里不再写第二份断言**——判据分散在两个地方，就等于没有一个地方知道判据的全集，
-v1.10 那次漂移漏掉的正是当时写在 workflow 里那段 bash 没覆盖的两处。
+[`.github/workflows/contract.yml`](.github/workflows/contract.yml) 在 push / PR / 打 tag 时
+调的就是不带参数的那一条。**workflow 里不再写第二份断言**——判据分散在两个地方，
+就等于没有一个地方知道判据的全集，v1.10 那次漂移漏掉的正是当时写在 workflow 里
+那段 bash 没覆盖的两处。
+
+**但这条 workflow 在 GitHub 上一次都没跑过。** 三个仓库的 Actions 都是账号级停用
+（`Actions has been disabled for this user`，run 数全是 0，仓库里改不动），
+所以它今天拦不住任何东西——带着红的提交照样能合、照样能打 tag。
+**在 Actions 恢复之前，真正的门禁只有一道：合 `main` 之前、打 tag 之前，本机把
+`python3 tools/check_contract.py` 跑到全绿。** 不要在任何地方写"CI 会拦住"。
+详情与查证过程见契约状态行下方的降级声明。
 
 ## 版本
 
 | tag | 状态行 |
 | --- | --- |
-| `v1.11` | **契约面与 v1.10 逐字节相同**，只补一个自洽的版本号：tag `v1.10` 里 `contract_version` 停在 `v1.9`（三笔补正落在打 tag 之后），下游钉它会红一条版本断言。`v1.10` 已推送不能移动，所以补 tag 不移 tag。两侧 pin 由 `v1.8` 直接改到这里 |
+| `v1.11` | **契约面与 v1.10 逐字节相同**，只补一个自洽的版本号：tag `v1.10` 里 `contract_version` 停在 `v1.9`（三笔补正落在打 tag 之后），下游钉它会红一条版本断言。`v1.10` 已推送不能移动，所以补 tag 不移 tag。两侧 pin 由 `v1.8` 直接改到这里。<br>**⚠️ `main` 上有一处对本 tag 的更正（2026-05-06，尚未成版）**：tag 里写「七条缺口全部关闭」，实为六条——§4.4 那条的机器判据（`execution_status` 提级为 `required`）没达成。**只改文字，`schema/` 与 fixtures 零改动，钉本 tag 不受影响** |
 | `v1.10` | 七条缺口全部关闭；**判据是降级的**——原计划「两侧 CI 在 GitHub 上绿一次」一次都没发生（账号级 `Actions has been disabled for this user`），实际判据是「提交可推送复核 + 本机按 CI 入口复现全绿」。**⚠️ 这个 tag 的 `contract_version` 停在 `v1.9`，不要钉它，钉 `v1.11`** |
 | `v1.9` | `dp-trust-01` 的进度标记挂错了对象——fixture 断判据、活载荷断进度，两件事拆开；新增 `dp-trust-07` |
 | `v1.8` | 把 `/query` 纳入契约（它是今天的默认路径，此前一直在保护范围外）；§4.6.5 币种改为按来源三分 |
