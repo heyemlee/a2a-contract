@@ -1,6 +1,7 @@
 {
   "route": "database_query", "confidence": 0.7,
   "queried_database": true,
+  "execution_status": "success",
   "has_risk": false,
   "degraded": true,
   "degrade_reason": "模型不可用，回放了最近一条同类问题的历史 SQL",

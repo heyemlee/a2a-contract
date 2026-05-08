@@ -1,6 +1,7 @@
 {
   "route": "database_query", "confidence": 0.88,
   "queried_database": true,
+  "execution_status": "partial_success",
   "has_risk": false,
   "degraded": false,
   "degrade_reason": "",

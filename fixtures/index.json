@@ -1,7 +1,7 @@
 {
   "$comment": "跨仓库 golden fixtures 的清单。两侧 CI 都读这个文件，不要各自维护一份用例表——用例表分叉就是副本漂移的老毛病换个地方复发。字段含义见 fixtures/README.md 与 CONSUMER-TESTS.md。",
   "contract": "a2a-streaming-contract.md",
-  "contract_version": "v1.11",
+  "contract_version": "v1.12",
   "cases": [
     {"id": "dp-valid-01", "group": "A", "file": "data-part/valid/01-success-single-step.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
@@ -53,10 +53,10 @@
      "trust": "not_usable",
      "why": "database 写成 \"ERP\"，不符合 ^[a-z][a-z0-9_]*_db$。调用方的中文映射会静默退化成显示原始串"},
 
-    {"id": "dp-trust-01", "group": "C", "file": "data-part/trust-negative/01-failed-step.json",
-     "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
+    {"id": "dp-trust-01", "group": "B", "file": "data-part/trust-negative/01-failed-step.json",
+     "schema": "schema/artifact-data-part.schema.json", "expect": "invalid",
      "trust": "not_usable",
-     "why": "**本组的核心用例。** 唯一一步 success=false，但 queried_database=true、has_risk=false、degraded=false——今天的三布尔判据会把它判成可信。execution_status 应为 failed"},
+     "why": "**v1.12 由 C 组改判到 B 组，是提级这件事本身的反例。** 它没有 execution_status：v1.11 之前这是 C 组核心用例（合法载荷，按 §4.6.7 过渡判据从 steps[] 推导，status_source=derived）。v1.12 把该字段提级为 required、过渡判据作废，于是这份载荷不再合法，**唯一的拒绝理由就是缺这个字段**（其余六个 B 组反例各自的理由不受影响，已逐条复核）。它现在证明的是「缺字段会被挡住」，不再是「缺字段会被静默推导」。**文件路径故意不动**——两侧按字面路径读它，挪文件会红在别人仓库里。两侧仍应保留推导能力，但那是对非合规载荷的防御，不是契约路径"},
 
     {"id": "dp-trust-02", "group": "C", "file": "data-part/trust-negative/02-partial-success.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
@@ -86,7 +86,7 @@
     {"id": "dp-trust-07", "group": "C", "file": "data-part/trust-negative/07-failed-step-with-status.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
      "trust": "not_usable",
-     "why": "与 dp-trust-01 同一份载荷，但**带着** execution_status。两条一起构成 §4.6.7 过渡判据的完整覆盖：01 走推导路径（status_source=derived），07 走契约路径（status_source=contract）。两条都必过——进度标记不挂在 fixture 上，见 CONSUMER-TESTS 的 C 组"},
+     "why": "与 dp-trust-01 同一份载荷，但**带着** execution_status。v1.12 起它是 C 组 failed 这一档的正主——01 因为缺字段已改判 B 组，两条的关系由「同一判据的两条路径」变成「合规载荷与不合规载荷的对照」。业务结论仍是不可作出处，status_source=contract。进度标记不挂在 fixture 上，见 CONSUMER-TESTS 的 C 组"},
 
     {"id": "pe-valid-01", "group": "E", "file": "progress-event/valid/01-routing.json",
      "schema": "schema/progress-event.schema.json", "expect": "valid", "trust": "n/a",

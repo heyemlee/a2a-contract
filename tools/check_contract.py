@@ -104,6 +104,20 @@ def check_schemas() -> None:
         ok(f"stage 枚举：声明 {len(declared)} 个、当前实发 {len(now)} 个，"
            f"**相等 ⇒ §4.5 缺口已关闭**（历史对照组仍记着当初缺的 {sorted(declared - was)}）")
 
+    # v1.12：§4.4 的关闭判据——`execution_status` 由可选提级为 required。
+    # 判据当初特意挪到契约仓库这一侧（附录 A 的 v1.9 行），图的就是不依赖任何一侧的
+    # 测试标记、也不会因为谁 rebase 而失效。**改这一行的那次提交就是关闭证据。**
+    dp = json.loads(
+        (SCHEMA_DIR / "artifact-data-part.schema.json").read_text(encoding="utf-8")
+    )
+    if "execution_status" not in dp["properties"]:
+        fail("artifact-data-part.schema.json: execution_status 连 properties 都没有")
+    elif "execution_status" not in dp["required"]:
+        fail("artifact-data-part.schema.json: execution_status 不在 required 里——"
+             "§4.4 的关闭判据就是它提级为必填，没提级就不算关闭")
+    else:
+        ok("execution_status ∈ required ⇒ **§4.4 缺口已关闭**（v1.12 提级，走的 §6）")
+
     db = json.loads((SCHEMA_DIR / "database-id.schema.json").read_text(encoding="utf-8"))
     current = set(db["$defs"]["current-2026-09-04"]["enum"])
     retired = set(db["$defs"]["retired-v1.6"]["enum"])
@@ -173,6 +187,27 @@ def check_fixtures() -> None:
         else:
             mark = "校验通过" if actually_valid else f"如期被拒（{errors[0].message[:60]}）"
             ok(f"{cid} [{case['group']}] {mark}")
+
+    # v1.12 提级 execution_status 带来的坑：多一条必填 = 每个反例都多一个被拒理由，
+    # 于是「这条反例真的在保护它声称保护的东西」就悄悄失效了。除 dp-trust-01
+    # （它的职责本来就是「缺这个字段会被挡住」）以外，任何反例都不许因为它被拒。
+    for case in manifest["cases"]:
+        if case["expect"] != "invalid" or case["id"] == "dp-trust-01":
+            continue
+        path = FIXTURES / case["file"]
+        schema_path = ROOT / case["schema"]
+        if not path.exists() or not schema_path.exists():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        reasons = [
+            e.message for e in cls(schema, registry=registry).iter_errors(payload)
+        ]
+        stray = [m for m in reasons if "execution_status" in m]
+        if stray:
+            fail(f"{case['id']}: 被拒的理由里混进了 execution_status —— {stray[0]}。"
+                 f"提级不该给既有反例添理由，给它补上这个字段")
+    ok("反例的拒绝理由未被 execution_status 提级污染（dp-trust-01 除外，那正是它的职责）")
 
     groups = {c["group"] for c in manifest["cases"]}
     for required in ("A", "B", "C", "D", "E"):

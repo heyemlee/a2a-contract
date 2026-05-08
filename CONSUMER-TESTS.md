@@ -1,6 +1,6 @@
 # 两侧 CI 必须跑的契约用例
 
-> 配套：`a2a-streaming-contract.md`（v1.11）、`schema/`、`fixtures/`。
+> 配套：`a2a-streaming-contract.md`（v1.12）、`schema/`、`fixtures/`。
 > 本文只说**跑什么、断言什么**，不规定用什么测试框架。
 >
 > 上面这个版本号由 `tools/check_contract.py version` 与契约状态行比对。
@@ -63,7 +63,14 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 
 ### B 组：schema 反例——**必须被拒**
 
-`fixtures/data-part/schema-invalid/` 下六个用例。**这一组是 §9.1 缺口的回归测试。**
+`fixtures/data-part/schema-invalid/` 下六个用例，**外加 v1.12 改判进来的 `dp-trust-01`**
+（共七条）。**这一组是 §9.1 缺口的回归测试。**
+
+> **`dp-trust-01` 为什么在这一组，而文件却还在 `trust-negative/` 下。**
+> v1.12 把 `execution_status` 提级为 `required` 之后，这份不带该字段的载荷
+> **不再合法**，唯一的拒绝理由就是缺它——所以它按性质属于 B 组。
+> **文件没有跟着挪目录**：两侧都按字面路径读它，挪一次就会红在别人仓库里。
+> 分组看 `fixtures/index.json` 的 `group`，不要按目录名推断。
 
 **服务端断言：** 自己产出的 data part 永远不长成这六种样子。
 最省的做法是在 A 组那次真实查询后顺手再过一遍 schema——反例本身服务端不用构造。
@@ -82,12 +89,18 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 
 ### C 组：信任反例——**校验通过，但不可作出处**
 
-`fixtures/data-part/trust-negative/` 下六个用例。这一组是本文最容易被跳过、
-也最值钱的一组：**它们全都是合法载荷**，schema 拦不住，只能靠业务判据。
+`fixtures/data-part/trust-negative/` 下的用例，**v1.12 起是六条**：`02`–`07`。
+这一组是本文最容易被跳过、也最值钱的一组：**它们全都是合法载荷**，
+schema 拦不住，只能靠业务判据。
+
+> **`01-failed-step` 在 v1.12 离开了本组，改判到 B 组。** 它没有 `execution_status`，
+> 而该字段已提级为 `required`，所以它不再是"合法载荷"——不满足本组的定义性质。
+> 本组 `failed` 这一档由 `07-failed-step-with-status` 接手（同一份载荷，带着字段）。
+> 详见下面「v1.9 的分法」表下方的 v1.12 更正。
 
 | fixture | 期望的处置 |
 | --- | --- |
-| `01-failed-step` | 不可作出处。`queried_database=true` 且三布尔全"干净"，但唯一一步 `success=false` |
+| `07-failed-step-with-status` | 不可作出处。唯一一步 `success=false`，三布尔全"干净"；`execution_status=failed` 由服务端下发 |
 | `02-partial-success` | 部分可用。成功那步的数据不得整段丢弃（丢了比现状更糟，§4.6.1） |
 | `03-has-risk` | 不可作出处 |
 | `04-degraded-history-replay` | 不可作出处。`state` 仍是 `completed`（§4.6.8），只能靠 `degraded` 区分 |
@@ -119,11 +132,43 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 **进度标记只能挂在第三行**——只有活载荷会随实现改变。前两行是判据的正确性，
 今天就该全绿，任何时候都不许放宽。
 
+> ### ⚠️ v1.12 更正：上表第一行与下面那条关闭判据，在同一份文档里是打架的
+>
+> 第一行要求 `dp-trust-01` **保持没有** `execution_status`，用来覆盖推导路径
+> （`status_source == "derived"`），还写着"任何时候都不许放宽"。
+> 而下一节的关闭判据要求"给现存 fixture **补上**该字段"。
+> **补了它，第一行那条覆盖就没了；不补，提级之后它就是非法载荷。**
+> v1.9 写关闭判据时没注意到会撞掉自己刚设计的分组——两条都是 v1.9 同一版写的。
+>
+> **v1.12 的取舍：不补字段，把它改判到 B 组。**
+> 它的职责从"缺字段会被静默推导"变成"缺字段会被挡住"，唯一的拒绝理由就是缺这个字段。
+> 上表第一行因此作废：**提级之后不存在"合法但没有 `execution_status`"的载荷**，
+> 它要断言的那条路径已经不是契约路径了。
+>
+> | 断言对象 | 用例 | 状态 | 断什么（v1.12 起） |
+> | --- | --- | --- | --- |
+> | **fixture**（冻结载荷） | `dp-trust-01`（无 `execution_status`） | **必过** | ① schema 校验**必须失败**，且理由就是缺这个字段；② 回落判定不可作出处 |
+> | **fixture** | `dp-trust-07`（同载荷 + `execution_status`） | **必过** | ① 业务结论：不可作出处；② `status_source == "contract"` |
+> | **自己真实产出的载荷** | 各侧自己写 | **必过**（两侧均已上线） | `status_source == "contract"` |
+>
+> **推导能力两侧都别删。** 作废的是"推导出来的结论可以照常采信"，不是推导本身——
+> 不合规载荷（服务端 bug、版本错配、中间件吞字段）真的会出现，那时还得靠 `steps[]`
+> 说清楚"查挂了"而不是崩掉。只是结论一律按不可信处置。详见契约 §4.6.7。
+
 ### 缺口关闭的机器判据（不靠任何一侧的 xfail）
 
 `execution_status` 在 `schema/artifact-data-part.schema.json` 里由**可选提级为 `required`**
 （走 §6 契约变更），同时给现存 fixture 补上该字段。**那一个契约仓库的提交就是关闭证据**,
 `tools/check_contract.py` 能验，不依赖任何一侧的测试标记，也不会因为谁 rebase 而失效。
+
+> **✅ v1.12 已达成。** `required` 里现在含 `execution_status`，
+> `tools/check_contract.py` 断言这一点。「给现存 fixture 补上该字段」按上面的更正
+> 执行为**十五份补、`dp-trust-01` 改判**，`dp-trust-07` 本来就带着。
+>
+> **另外守了一条 v1.11 就预判到的坑：** 多一条必填 = 每个既有反例都多一个被拒理由，
+> 「这条反例真的在保护它声称保护的东西」会因此悄悄失效。六份反例都补了该字段，
+> 实测各自仍只因原来那一个理由被拒；自检脚本现在断言——**除 `dp-trust-01` 外，
+> 任何反例的拒绝理由里出现 `execution_status` 即失败**。
 
 ### D 组：`database` 标识符
 
@@ -199,7 +244,7 @@ python3 tools/check_contract.py
 引用时钉在 tag 上，不要跟 `main`：
 
 ```bash
-git clone --depth 1 --branch v1.11 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 ## 这份文件没有覆盖什么

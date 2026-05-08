@@ -1,29 +1,33 @@
 # A2A 流式契约：`message/stream`
 
-> 状态：**v1.11，七条缺口里六条关闭、第七条差契约仓库这一侧的最后一步**——判据是「提交可复核 + 本机按 CI 入口复现全绿」，**不是「GitHub CI 绿过」**（那件事一次都没发生，原因见下）。
+> 状态：**v1.12，七条缺口全部关闭——这次是真的七条**，判据是「提交可复核 + 本机按 CI 入口复现全绿」，**不是「GitHub CI 绿过」**（那件事一次都没发生，原因见下）。
 >
-> **⚠️ 这一行是对 tag `v1.11` 的更正，尚未成版。** tag `v1.10` 与 `v1.11` 里写的都是
-> 「七条缺口**全部**关闭」，而 §4.4 那条并没有达成 v1.9 给它定下的**机器判据**。
+> **v1.12 只做一件事：把 §4.4 欠的那一步补上。** v1.10 与 v1.11 都写着「七条**全部**
+> 关闭」，那句话说过头了——§4.4 的关闭判据是 v1.9 特意挪到契约仓库这一侧的一个动作
+> （`execution_status` 由可选提级为 `required`、现存 fixture 补齐该字段），
+> 而那一步直到 v1.11 都没做。2026-05-06 先发了一版**只改文字**的更正，本版把动作做掉。
 >
-> 判据原文是「`execution_status` 在 schema 里由可选提级为 `required`、现存 fixture
-> 补齐该字段，那一个提交就是证据」（附录 A 的 v1.9 行）。今天它仍在 `required` 之外：
+> 现在它在 `required` 里：
 >
 > ```bash
 > python3 -c "import json;print(json.load(open('schema/artifact-data-part.schema.json'))['required'])"
-> # ['queried_database', 'has_risk', 'degraded', 'trace_id', 'route', 'steps']
+> # ['queried_database', 'has_risk', 'degraded', 'execution_status', 'trace_id', 'route', 'steps']
 > ```
 >
-> 十七个 data-part fixture 里也只有 `dp-trust-07` 带这个字段。
-> **两侧的实现是真的合入了**（ai-helpdesk `40be899` → `main` = `e594655`；ai-sql-agent
-> 随 PR heyemlee/ai-sql-agent#1 合入 `main`，对应 `22060ee`），差的正是契约仓库这一侧——
-> 而判据当初**特意挪到这一侧**，图的就是「不依赖任何一侧的测试标记」。所以按附录 B
-> 自检表第 2 条，这条只能写「实现已合入、契约侧待提级」，**不能计进「全部关闭」**。
+> **这是一次 §6 契约变更**（必填字段是硬门禁），两侧都要跟着动，不是纯文字版。
+> 十七份 data-part fixture 里补了十五份，`dp-trust-07` 本来就带着，
+> **只有 `dp-trust-01` 故意不补**——它没有这个字段正是它现在的职责：
 >
-> **本次更正只动文字**：`schema/` 与 fixtures 一个字节没改，下游钉 `v1.11` 不受影响，
-> 这段随下一次发版一并成版。**提级本身是一次 §6 契约变更**（必填字段是硬门禁），
-> 要连着十六个 fixture 补字段、六个 schema 反例重新核对拒绝理由一起做——
-> 那六个反例今天各因一个特定理由被拒，多一条必填会让它们多一个被拒理由，
-> 「反例必须真的被拒」这条就得逐个重验。
+> **`dp-trust-01` 由 C 组改判到 B 组。** 提级之前它是 C 组核心用例（合法载荷，
+> 靠 §4.6.7 的过渡判据从 `steps[]` 推导，`status_source == "derived"`）；提级之后
+> 过渡判据作废，这份载荷**不再合法**，唯一的拒绝理由就是缺这个字段。它从
+> 「缺字段会被静默推导」的样本，变成「缺字段会被挡住」的反例。**文件路径没动**——
+> 两侧按字面路径读它，挪文件会红在别人仓库里。
+>
+> **那六个既有反例逐条重验过了。** 多一条必填会给每个反例多一个被拒理由，
+> 「这条反例真的在保护它声称保护的东西」就会悄悄失效。所以六份都补了该字段，
+> 实测各自仍只因原来那一个理由被拒；`tools/check_contract.py` 现在把这条守死了
+> （除 `dp-trust-01` 外，任何反例的拒绝理由里出现 `execution_status` 即失败）。
 >
 > **v1.11 只做一件事：让「钉在 tag 上」这条规矩重新可执行。**
 > 契约面——`schema/` 与全部 fixture 载荷——与 v1.10 **逐字节相同**
@@ -49,8 +53,10 @@
 >
 > > **2026-05-06 更正：上面这句说过头了，应为「六条关闭，第七条实现已合入、契约侧待提级」。**
 > > §4.4 那条的关闭判据是契约仓库自己的一个动作（`execution_status` 提级为 `required`），
-> > 那一步至今没做。理由与证据见本文开头的更正段。这句原文保留，是为了让
-> > 「v1.10 当时是这么写的」可追溯——附录 A 的 v1.10 行同理，不回改。
+> > 那一步当时没做。这句原文保留，是为了让「v1.10 当时是这么写的」可追溯——
+> > 附录 A 的 v1.10 行同理，不回改。
+> >
+> > **✅ v1.12 已把那一步做掉**，七条现在是真的全关。经过见本文开头。
 >
 > 两侧的提交都推上去了，且**都已落到各自的默认分支**——ai-helpdesk `main`、
 > ai-sql-agent 的 PR heyemlee/ai-sql-agent#1 已**合入 `main`**（合入后对应 `22060ee`），
@@ -117,10 +123,13 @@
 >
 > > **2026-05-06 更正：下一段开头的「七条缺口在 v1.10 全部关闭」说过头了**，应为
 > > 「六条关闭，第七条实现已合入、契约侧待提级」——§4.4 那条的关闭判据是契约仓库
-> > 自己的一个动作（`execution_status` 提级为 `required`），那一步至今没做。理由与
-> > 证据见本文开头的更正段。原文保留，理由同 §「v1.10 回顾」那处：让「v1.10 当时
-> > 是这么写的」可追溯。**本节其余部分不受影响**——判据降级讲的是「关的那些是怎么
-> > 关的」，与关了几条是两件事。
+> > 自己的一个动作（`execution_status` 提级为 `required`），当时没做。原文保留，
+> > 理由同 §「v1.10 回顾」那处：让「v1.10 当时是这么写的」可追溯。
+> > **本节其余部分不受影响**——判据降级讲的是「关的那些是怎么关的」，
+> > 与关了几条是两件事。
+> >
+> > **✅ v1.12 已把 §4.4 那一步做掉**，条数更正到此结束。
+> > **但判据降级这件事没变**：GitHub CI 至今一次没跑过，下面整段仍然有效，不许删。
 >
 > 七条缺口在 v1.10 全部关闭，但关闭判据**不是**原计划的「两侧 CI 在 GitHub 上绿一次」——
 > 那件事至今**没有发生过一次**，而且不是这三个仓库的问题：
@@ -219,7 +228,7 @@
 > | 条款 | 契约怎么写 | 代码实际是什么 | 证据（2026-04-28 复核） | 性质 |
 > | --- | --- | --- | --- | --- |
 > | §1③ / §5.1 | `message/send` 固定预算 **90s**（上线前 25s / 上线后 90s 两档） | 默认 **45s**——两档里都没有这个值 | `ai-helpdesk/backend/tools/a2a_client.py:80`（`send_timeout_s: float = 45.0`）、`:273-274`（env 默认 `"45"`，注释自承「上线后改 90」，没改） | ✅ **契约已改（v1.6）**：补第三档「已实现未承接流量 = 45s」，代码现值即合规值，**无需改代码**。新增待办：切档时外层工具超时（今天 47s）必须与 send 一起动 |
-> | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约已改（v1.5）+ 实现已就位待提交（v1.7）**：ai-sql-agent 已实现 `execution_status` 与三个汇总数（`ai_sql_api/result_summary.py` 的 `compute_execution_status`，`/query` 与 A2A 共用同一个 `data_part()`），ai-helpdesk 已按 §4.6.7 过渡判据消费（`backend/core/evidence.py`）。🔸 **实现已合入（v1.10），契约侧待提级（2026-05-06 更正）**：ai-helpdesk `main` = `e594655`（17 笔，已推送）；ai-sql-agent 的 12 笔已随 PR heyemlee/ai-sql-agent#1 **合入 `main`**（合入后对应 `22060ee`）。本机按各自 CI 入口复现：helpdesk 后端 **675 passed / 2 skipped / 1 xfailed** + 契约用例 **75 passed / 1 xfailed**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）。复现方法见下方「怎么重新验一遍」。**但 v1.9 给这条定的机器判据——`execution_status` 提级为 `required`——还没做**，所以本行不写「已关闭」，理由见状态行的更正段 |
+> | §4.4 → §4.6 | `failed` = 任一步骤失败 / 执行出错 / 被拒 | **只有 pipeline 抛异常才发 `failed`**；查询全挂照发 `completed`，且 `queried_database` 也是 `true`——**调用方没有任何字段能发现查挂了** | `ai_sql_a2a/server.py:277`、`:317`；`grep -n failed ai_sql_a2a/server.py` 全文只有这两处。实测与改判理由见 §4.4 缺口框与 §4.6.8 | **契约已改（v1.5）+ 实现已就位待提交（v1.7）**：ai-sql-agent 已实现 `execution_status` 与三个汇总数（`ai_sql_api/result_summary.py` 的 `compute_execution_status`，`/query` 与 A2A 共用同一个 `data_part()`），ai-helpdesk 已按 §4.6.7 过渡判据消费（`backend/core/evidence.py`）。🔸 **实现已合入（v1.10），契约侧待提级（2026-05-06 更正）**：ai-helpdesk `main` = `e594655`（17 笔，已推送）；ai-sql-agent 的 12 笔已随 PR heyemlee/ai-sql-agent#1 **合入 `main`**（合入后对应 `22060ee`）。本机按各自 CI 入口复现：helpdesk 后端 **675 passed / 2 skipped / 1 xfailed** + 契约用例 **75 passed / 1 xfailed**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）。复现方法见下方「怎么重新验一遍」。✅ **已关闭（v1.12）**：v1.9 给这条定的机器判据——`execution_status` 由可选提级为 `required`、现存 fixture 补齐该字段——已达成，**改 `required` 那一行的提交就是关闭证据**，`tools/check_contract.py` 现在断言它在 `required` 里。十五份 fixture 补了字段，`dp-trust-01` 故意不补并由 C 组改判 B 组（它现在是「缺字段会被挡住」的反例），六个既有反例逐条重验过拒绝理由没被污染 |
 > | §4.5 | 九个 stage **全发**（§9 #3 答复"全发"） | 发八个，**`normalization` 不在映射表里** | `ai_sql_a2a/server.py:41-50`（`_STAGE_MAP` 八条）、`:40`（注释自承「契约 §8.2 待办」）；根因 `ai_sql_pipeline/text2sql_pipeline.py:245-257` 仍是裸 `log_event("stage.normalization")` 且只在 `changed` 时记 | **实现已就位待提交（v1.7）**：`_STAGE_MAP` 已九条齐全，`text2sql_pipeline.py` 已改真 `stage()`。✅ **已关闭（v1.10）**：`8340323`（已随 PR #1 合入 `main`）。`schema/stage.schema.json` 的 `emitted-*` 已更新为九个——**改那个集合的这一次提交就是关闭证据**，`tools/check_contract.py` 现在断言实发集合等于 `contract-declared` |
 > | §4.5 | `database` 钉死四个：`erp_db`/`mes_db`/`pm_db`/`wms_db`，"不会在非契约变更中改名或新增" | 标识符集合**随部署配置走**。当前部署是 `erp_db`/`prod_db`/`svc_db`/`wms_db`；`mes_db`/`pm_db` 在运行时根本不存在 | `ai-sql-agent/.env:58` → `AI_SQL_SEMANTIC_DIR=sim_erp/semantic`；`ls sim_erp/semantic/` = `erp_db/prod_db/svc_db/wms_db.yaml`；`mes_db`/`pm_db` 只出现在 benchmark 数据集（`benchmark/runner.py:246`）。调用方已单方面加了两个标签：`ai-helpdesk/backend/tools/a2a_client.py:55-56` | ✅ **契约已改（v1.6）**：契约面降为形状 + 可拉取清单；`mes_db`→`prod_db` 改名、`pm_db` 删除（职责在 `erp_db`）、`svc_db` 补入。调用方那两个标签**追认为合规**，不再欠一次变更 |
 > | §7 | `tasks/get` "多副本下会大概率 `-32001`" | **恒返回 `-32004`**，与副本数无关；服务端根本没有任务表 | `ai_sql_a2a/server.py:359-362`（`tasks/get` 与 `cancel`/`resubscribe` 同列在不支持表里）；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中 | **契约要改** |
@@ -598,12 +607,17 @@ N×  status-update     进度，final=false，state=working
 **性质：契约要改（本版已改）+ 实现待办。**
 判定过程与理由见 §4.6.8 末尾的「由此改判」。
 
-> **🔸 进度（2026-05-06 更正）：实现已合入，契约侧待提级——这个框还不能摘。**
-> 两侧代码都已合入 `main`（ai-helpdesk `40be899`、ai-sql-agent `22060ee`），
+> **✅ 已关闭（v1.12）。这个框按 v1.11 定的规矩保留，不摘——只加关闭标记与证据。**
+> 两侧实现早已合入 `main`（ai-helpdesk `40be899`、ai-sql-agent `22060ee`），
 > 但 v1.9 为这条缺口定下的关闭判据是一个**契约仓库自己的动作**——
-> `execution_status` 由可选提级为 `required`、现存 fixture 补齐该字段——**那一步还没做**。
-> 判据当初特意挪到这一侧，就是为了不依赖任何一侧的测试标记，所以不能拿两侧的
-> 合入记录来顶。详见状态行的更正段。
+> `execution_status` 由可选提级为 `required`、现存 fixture 补齐该字段。
+> 判据当初特意挪到这一侧，就是为了不依赖任何一侧的测试标记，所以两侧的合入记录
+> 顶不了它；那一步拖到 v1.12 才做，v1.10/v1.11 期间「七条全部关闭」是说过头了
+> （2026-05-06 已就地更正）。
+>
+> **关闭证据**：`schema/artifact-data-part.schema.json` 的 `required` 现在含
+> `execution_status`，`tools/check_contract.py` 断言这一点——**改那一行的提交就是证据**，
+> 不依赖任何一侧的测试标记，也不会因为谁 rebase 而失效。
 
 **先说事实。** `state` 的实际判据是「pipeline 有没有抛异常」，不是「有没有步骤失败」：
 `ai_sql_a2a/server.py:277` 的 `failed` 只出现在 `except Exception` 分支里，
@@ -863,7 +877,7 @@ routing → retrieval → planning → generation → execution → validation
 > ➕ = 服务端已经算出来了但没放进 artifact，搬过去代价接近零；
 > 🔨 = 服务端今天没有这个概念，**先定义、后实现**，实现前按"未知"处置。
 
-#### 4.6.1 `execution_status`（🔨 新增，顶层，必填）
+#### 4.6.1 `execution_status`（✅ v1.12 起真的必填）
 
 一个闭集字符串，回答"这次查库到底跑成什么样"：
 
@@ -1033,10 +1047,30 @@ routing → retrieval → planning → generation → execution → validation
 > | 字段**契约已要求、服务端也在发**，这次没送到 / 类型不对 | 下表（**降级为不可信**） |
 > | 字段标着 **🔨 尚无此概念** 或 **➕ 已算出未下发**，服务端还没实现 | **各小节的过渡判据**，不落进下表 |
 >
-> **为什么必须分开。** `execution_status` 今天标着 🔨，也就是说**每一份线上载荷
-> 都缺它**。照下表逐字执行 → 所有查询一律 `failed` → 一条都不能作出处 →
-> **A 组正例（`dp-valid-01` 等）全红**。而 CONSUMER-TESTS 自己写着
+> **为什么必须分开。**（写于 v1.7，当时 `execution_status` 还标着 🔨。）
+> 那时**每一份线上载荷都缺它**，照下表逐字执行 → 所有查询一律 `failed` →
+> 一条都不能作出处 → **A 组正例（`dp-valid-01` 等）全红**。而 CONSUMER-TESTS 自己写着
 > 「A 组与 B 组必须同时绿」。一份自己过不了自家用例的规范，是规范写错了。
+> **v1.12 起这个字段已提级、不再属于本表管辖**，但这个区分本身对其余
+> 🔨/➕ 字段仍然有效，所以整段保留。
+>
+> ### ⚠️ v1.12：`execution_status` 这一条过渡判据**已作废**
+>
+> 它在 v1.12 提级为 `required`（§6 契约变更）。按本节最后一句的规矩，
+> **提级即作废**——所以下面那张表是历史，记录的是 v1.7–v1.11 之间的正确做法。
+> 今天的规矩只有两行：
+>
+> | 情况 | 处置 | 来源标记 |
+> | --- | --- | --- |
+> | 载荷合规（带 `execution_status`） | 直接采信 | `contract` |
+> | 载荷不合规（缺这个字段） | **schema 就该拦住它**。调用方仍可从 `steps[]` 推导以免崩，但结论**不得作出处** | `derived`，且一律按不可信处置 |
+>
+> **推导能力不要删。** 作废的是「推导出来的结论可以照常采信」这一条，**不是推导本身**：
+> 服务端出 bug、版本错配、中间件吞字段，都会让不合规载荷真的出现，
+> 那时候还得靠 `steps[]` 说清楚「这次查挂了」，而不是直接崩或者静默采信。
+> 机器可校验的反例是 `dp-trust-01`——它由 C 组改判到 B 组，**唯一的拒绝理由就是缺这个字段**。
+>
+> 下面是作废前的原文，保留可追溯：
 >
 > **`execution_status` 的过渡判据（规范，不是权宜）：**
 >
@@ -1048,14 +1082,18 @@ routing → retrieval → planning → generation → execution → validation
 >
 > 这不是发明新规则：§4.6.1 明确写了五个值的**判据全部可由现有 `steps[]` 算出**。
 > `result_truncated` 同理——顶层字段没有就看 `steps[i].truncated`（那个今天在线上），
-> 两者都没有才按 `true` 处置。
+> 两者都没有才按 `true` 处置。**`result_truncated` 的过渡判据仍然有效**，
+> v1.12 只提级了 `execution_status` 一个字段。
 >
 > **调用方必须把来源标出来**（上表第三列，字段名建议 `status_source`）。
 > 理由见 §4.6.2 自己的警告：「三个汇总数调用方不应自己 reduce，reduce 的口径会漂」
 > ——只要来源还是 `derived`，那句警告就还成立，缺口就没真关。
 > 两侧独立实现时都自发做了这件事并都叫了这个名字，v1.7 把它收进契约。
+> **v1.12 起合规载荷的来源恒为 `contract`，那句警告对这个字段不再成立**——
+> 这正是 §4.4 能写「已关闭」的原因。
 >
 > 🔨/➕ 字段**提级为必填**时（走 §6），过渡判据随之作废，那时它们才落进下表。
+> （`execution_status` 已于 v1.12 走完这一步，其余 🔨/➕ 字段照旧。）
 
 本节所有字段共用一条规则：
 
@@ -1453,6 +1491,17 @@ routing → retrieval → planning → generation → execution → validation
 
 **还缺的**，全部列在 `CONSUMER-TESTS.md` 里，两侧各自接：
 
+> **⚠️ 下面这份清单写于 v1.5，其中两条已经过时，原文保留可追溯：**
+>
+> - **C 组那条的 `xfail` 指示是错的**，v1.6 写错、v1.7 改了还是错，v1.9 才改对
+>   （理由见 CONSUMER-TESTS 的「`01-failed-step` 这一条被改过两次」）。
+>   **v1.12 起 `dp-trust-01` 已改判到 B 组**：`execution_status` 提级为 `required`
+>   之后它不再是合法载荷，断言从"业务判定"变成"schema 必须拒它，且理由就是缺这个字段"。
+> - **E 组那条的断言集合已经换了**：v1.10 起断 `contract-declared` 而不是
+>   `emitted-2026-09-04`，`normalization` 已经在发了（§4.5 缺口框）。
+>
+> 以 `CONSUMER-TESTS.md` 的当前内容为准，这份清单只反映 v1.5 当时的缺口分布。
+
 - **B 组**：schema 反例必须被拒，且回落方向是"不可信"（§9.1 缺口的回归测试）；
 - **C 组**：信任反例。其中 `dp-trust-01`（唯一一步失败但三布尔全"干净"）
   **在 `execution_status` 上线之前应当是红的**，标 `xfail`，不要删也不要放宽断言；
@@ -1675,6 +1724,7 @@ python3 -c 'import os; print(min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.12 | 2026-05-08 | **§4.4 的最后一步做掉了，七条缺口现在是真的全关。**<br>**这是一次 §6 契约变更**，不是纯文字版：`schema/artifact-data-part.schema.json` 的 `required` 新增 `execution_status`。v1.9 特意把这条缺口的关闭判据挪到契约仓库这一侧（「提级为 `required` + 现存 fixture 补齐该字段，那一个提交就是证据」），图的是不依赖任何一侧的测试标记；但那一步一直没做，而 v1.10 / v1.11 的状态行都写着「七条**全部**关闭」——2026-05-06 先发了一版只改文字的更正（`444c242`、`d6e6087`），本版把动作补上。<br>**`dp-trust-01` 由 C 组改判到 B 组，这是本版唯一的语义分叉，值得记住。** v1.9 设计 C 组时让它**故意不带** `execution_status`，用来覆盖 §4.6.7 的推导路径（`status_source == "derived"`），并写明「如实断言，这是正确期望，不是缺陷……任何时候都不许放宽」。而同一份 CONSUMER-TESTS 里的关闭判据又要求「现存 fixture 补齐该字段」——**补了它，C 组这条覆盖就没了；不补，提级后它就是非法载荷**。两句话在同一份文档里打架，v1.9 写判据时没注意到会撞掉自己刚设计的分组。本版的取舍：**不补字段，改判到 B 组**，它从「缺字段会被静默推导」的样本变成「缺字段会被挡住」的反例，唯一的拒绝理由就是缺这个字段；C 组 `failed` 这一档由 `dp-trust-07` 接手（它本来就带着）。**文件路径没动**——两侧按字面路径读它，挪文件会红在别人仓库里（附录 B 的硬编码路径清单）。<br>**十五份 fixture 补了字段**，值按 §4.6.1 的判据逐份算（`dp-valid-02` 走对话路径 → `not_applicable`；`dp-trust-02` 一成一败 → `partial_success`；`steps == []` 的几份 → `failed`）。<br>**六个既有反例逐条重验了拒绝理由。** 多一条必填就是给每个反例多一个被拒理由，「这条反例真的在保护它声称保护的东西」会因此悄悄失效——这是 v1.11 那次更正就预判到的坑。六份都补了该字段，实测各自仍只因原来那一个理由被拒；`tools/check_contract.py` 新增一条断言把它守死（除 `dp-trust-01` 外，任何反例的拒绝理由里出现 `execution_status` 即失败），另新增「`execution_status` ∈ `required`」的断言作为本条缺口的机器判据。<br>**§4.6.7 的过渡判据对这个字段作废**（本节最后一句本来就写了「提级即作废」）。作废的是「推导出来的结论可以照常采信」，**不是推导本身**：服务端出 bug、版本错配、中间件吞字段都会让不合规载荷真的出现，那时仍要靠 `steps[]` 说清楚「查挂了」而不是崩掉或静默采信，所以两侧的推导代码都保留，只是结论一律按不可信处置。`result_truncated` 等其余 🔨/➕ 字段的过渡判据不受影响。<br>**两侧同步**：ai-helpdesk 三处 pin、ai-sql-agent 两处 pin 由 `v1.11` 改到 `v1.12`；两侧各有针对 `dp-trust-01` 的断言要跟着改判（详见两仓库本版提交）。**判据仍是降级的**——GitHub CI 至今一次没跑过（账号级 Actions 停用），本版同样只能靠「提交可复核 + 本机按各自 CI 入口复现全绿」。 |
 | v1.11 | 2026-05-06 | **补一个自洽的 tag，让下游能真的钉住。**契约面与 v1.10 **逐字节相同**（`schema/` 与全部 fixture 载荷零改动），本版不是 §6 契约变更，两侧无需改消费代码。<br>**起因**：tag `v1.10` 的 `fixtures/index.json` 里 `contract_version` 停在 `v1.9`——三笔「v1.10 补正」（`70fb56d` 查到 Actions 停用的确切原因、`77cadca` 补上版本一致性自检、`75eafe8` 记录 ai-sql-agent 已合入 `main`）都落在打完 tag 之后。下游按 `contract_version` 判断「拉到的是不是钉的那一版」，**所以两侧把 pin 从 v1.8 改到 v1.10 会红一条**，而红的不是契约面，是版本号。<br>**为什么不移动 `v1.10`**：它已经推送到 GitHub（`git ls-remote --tags origin` 可验）。附录 B 的规矩是「钉住的引用必须一直取得到当时那一份」——移动已发布的 tag 会让这条规矩失效，而这个仓库上一版刚刚为了同一个理由用 merge 而不是 squash 合的 PR。**宁可多一个 tag，不动已经发出去的那个。**<br>**为什么不是 `v1.10.1`**：`tools/check_contract.py` 的版本正则是 `v\d+\.\d+`，对 `v1.10.1` 会截出 `v1.10` 再与 `index.json` 比对，自检反而会红——这个仓库的版本约定就是两段式，补丁号没有位置。<br>**两侧同步**：ai-helpdesk 三处（`backend/tests/test_contract_fixtures.py` 的 `PINNED_TAG`、`.github/workflows/ci.yml` 的 `ref`、`scripts/ci-local.sh` 的 `CONTRACT_TAG`）、ai-sql-agent 两处（`tests/test_contract_fixtures.py` 的 `CONTRACT_TAG`、`.github/workflows/ci.yml` 的 `A2A_CONTRACT_TAG`）全部由 `v1.8` 改到 `v1.11`，**跳过 v1.9 / v1.10 两版**：v1.9 新增的 `dp-trust-07` 两侧早已兼容（v1.10 的复核已实测过），所以这是一次纯粹的版本号对齐。<br>**仓库整理（本版一并做掉，不动契约面）**：`git diff v1.10 v1.11 -- schema/ fixtures/` 仍然只有 `index.json` 那一行，以下四项都在契约面之外。<br>**① 版本一致性自检由「一处」扩到「五处」。** v1.10 补的那条只比 `fixtures/index.json`，而真正漂掉的是它没看的地方：`CONSUMER-TESTS.md` 抬头的「配套：…（v1.5）」**活过了 v1.6–v1.10 五个版本**，末尾的 `--branch v1.9` 也停在两版之前。**调用方早在 v1.6 就把前一条写进交回契约的反馈清单，写了也没人改——因为没有任何机器在看那一行。** 现在 `tools/check_contract.py version` 按**形态**收全五处：两张版本表的最新行、`contract_version`、`--branch` 示例、文档抬头的「配套：」。五处都做过反向验证（故意改坏，确认每一处都真的报错）——附录 B 自检表第 5 条，也是 `fixtures/README.md` 那条「反例必须真的被拒」用在自检脚本自己身上。<br>**为免给下一个人挖坑**，该段只看**会被复制粘贴去执行的行**（Markdown 的 ``` 围栏内、YAML 的非注释行）：附录 A 这类叙述历史的正文会原样写出旧版本号，照字面扫全文会把「把 `--branch v1.11` 改成 v1.12」这种正确的变更记录判红。<br>**② CI 里那段 bash 版本检查删掉，判据收归 `tools/check_contract.py` 一处。** 它当时只比「状态行 vs 附录 A」两处，而漂掉的正是它没覆盖的第三、第四处——**判据分散在两个地方，就等于没有一个地方知道判据的全集。**<br>**③ README 新增「目录结构：这几个路径是被下游硬编码的，不要重排」**，列出两侧按死路径读的四类位置（`schema/*.schema.json`、`fixtures/index.json`、同级目录回退 `../a2a-contract`、CI 的 `.contract/fixtures/index.json`）。重排目录是本仓库风险最高的操作——它一次性动掉所有引用，且红在别人的仓库里。真要做，那是一次三仓库同步变更，走 §6。<br>**④ 升版本流程补上「打 tag 必须是这一版的最后一个动作」**，附 v1.10 的原始病历（打完 tag 又补三笔 ⇒ tag 里的版本号永远停在上一版 ⇒ 只能补新 tag）。另新增 `.gitignore`，清掉 `fixtures/` 下两个混在夹具目录里的空 `.claude/.cc-writes/` |
 | v1.10 | 2026-05-05 | **七条缺口全部关闭；判据如实降级并写明。**<br>两侧提交已推送：ai-helpdesk `main` = `e594655`（17 笔）、ai-sql-agent 分支 `feat/p0-authorization-and-business-outcome` = `6ab26e6`（11 笔，PR heyemlee/ai-sql-agent#1）。本机按各自 CI 入口复现：helpdesk 后端 675 passed / 2 skipped / 1 xfailed、契约用例 75 passed / 1 xfailed、前端 48 passed、**生产构建成功**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）；契约自检 25 个 fixtures 全过。<br>**§4.5 的 normalization 缺口用机器判据关闭**：`schema/stage.schema.json` 新增 `emitted-2026-09-08`（九个，等于 `contract-declared`），`tools/check_contract.py` 的断言由「实发必须是声明的真子集」改为「当前实发必须等于声明」——**改这一组的这次提交就是关闭证据**。历史组 `emitted-2026-09-04`（八个）保留做对照且仍断言为真子集，不许被「修」成九个：它是那条缺口存在过的证据。<br>**⚠️ 判据是降级的。** 原计划是「两侧 CI 在 GitHub 上绿一次」，**那件事一次都没发生**——三个仓库（含本仓库一个刚建刚推、GitHub 确实读到了的 workflow）的 repo 级 Actions 全是 `enabled: true`、workflow `active`，而 run 数全是 **0**。指向账号级 Actions 策略 / 计费，仓库里改不动。实际判据因此是**「提交可推送复核 + 本机按 CI 入口复现全绿」**：**它证明了检查内容是对的，没证明检查会被强制执行**——这些门禁目前不是 required check，带着红的东西也照样能合。状态行下方加了这条声明，**CI 恢复之前不许删**。<br>**新增「怎么重新验一遍」**：三条可直接跑的命令，外加实测踩到的三个坑——① ai-sql-agent 必须在**没有 `.env`** 的环境里跑（它的配置隔离写在 `tests/conftest.py`，是 **pytest fixture**，而 CI 入口是 `unittest discover`，**unittest 不加载 conftest**；本机有 `.env` 时实测 29 failures + 3 errors，断言变成了「你的 `.env` 配了什么」）；② PostgreSQL 必须映射到宿主机 **5432**（`test_ops_readonly.py` 的只读角色 DSN 端口写死）；③ 契约 tag 要与被测仓库钉的一致——给 ai-sql-agent（钉 v1.8）喂 v1.9 时**只有版本断言一条失败、其余全过**，包括 v1.9 新增的 `dp-trust-07`，说明消费端已兼容，只差改 pin |
 | v1.9 | 2026-05-04 | **改掉一个改过两次还是错的地方；澄清两个来源标签的归属；记录两侧都已提交。**<br>**错：`dp-trust-01` 的进度标记挂错了对象。** v1.6 说「这条应当是红的，标 xfail」——错，按 §4.6.7 的过渡判据业务结论今天就能判对，会 XPASS。v1.7 改成「业务结论必过 + 判定来源标 `xfail(strict=True)`」——**还是错，而且更隐蔽**：那条断言的输入是一份**冻结的 fixture**，里面没有 `execution_status`，服务端上线之后真实流量的 `status_source` 变成 `contract`，**而这份 fixture 永远是 `derived`**。于是 xfail 永远不 XPASS，「摘掉它」这个条件永远不成立。两侧实现时都撞上了，服务端写进了反馈。<br>**根因**：fixture 是「契约长什么样」的样本，**不该同时承担「实现做到哪一步」的进度标记**;一份冻结的载荷能证明判据对不对，永远证明不了服务端今天发了什么。两件事绑在同一份文件上就会撞车。<br>**v1.9 按断言对象重分**：fixture 断判据（`dp-trust-01` 如实断 `derived`、新增 `dp-trust-07` 同载荷带字段断 `contract`，**两条今天就该全绿**）；进度只挂在**各侧自己真实产出的载荷**上（只有活载荷会随实现改变）。并把缺口关闭的判据挪成一个**机器可验的契约仓库动作**——`execution_status` 在 schema 里由可选提级为 `required`、现存 fixture 补齐该字段，那一个提交就是证据，`tools/check_contract.py` 能验，不依赖任何一侧的测试标记，也不会因为谁 rebase 而失效。<br>**澄清（§4.6.5）**：`currency_source` 与 `status_source` 都是**调用方给自己结论贴的来源标签**，**服务端不发**——服务端不知道调用方的部署配了什么，它只保证「判得出币种就下发 `currency`/`column_units`，判不出就不发」。服务端回传一个恒为 `contract` 的字段没有信息量。<br>**进度**：七条缺口里五条的实现**两侧均已提交**（ai-helpdesk `main` 17 笔、ai-sql-agent 分支 11 笔），**但都未推送**——本地提交第三方复核不了，所以性质由「待提交」改为「已提交待推送」，仍不写「已关闭」。同理 `emitted-*` 暂不改为九个：那个提交（`8340323`）在一条未推送的分支上，rebase 会换 hash |

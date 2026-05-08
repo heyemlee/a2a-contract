@@ -5,7 +5,7 @@
   "description": "契约 §4.4 / §4.6。message/send 与 message/stream **完全同构**，两条 transport 用同一份 schema——这正是 §4.4「调用方走 send 还是走 stream，能做的信任判断必须一模一样」的机器可校验版本。校验的对象是 parts[] 里 kind==\"data\" 那一项的 data 对象本身。",
 
   "type": "object",
-  "required": ["queried_database", "has_risk", "degraded", "trace_id", "route", "steps"],
+  "required": ["queried_database", "has_risk", "degraded", "execution_status", "trace_id", "route", "steps"],
 
   "$comment": "additionalProperties 策略（§4.6 要求的前向兼容）：**允许新增字段**。理由——§4.6 明确列了一批待实现字段（execution_status / failed_steps / result_truncated / as_of / currency / source_records），服务端把它们加上来时不得让调用方的校验挂掉。反过来，**删除、改名、改类型都会被 required 与 type 挡住**，那才是本 schema 要防的方向。调用方必须容忍未知字段（与 §4.3「必须容忍缺失」同源）。",
   "additionalProperties": true,
@@ -33,7 +33,7 @@
     },
 
     "execution_status": {
-      "$comment": "§4.6.1。🔨 服务端尚未实现——所以不在 required 里。实现之后应当提级为必填，届时是一次 §6 契约变更。**缺失按 failed 处置。**",
+      "$comment": "§4.6.1。✅ v1.12 提级为必填（§6 契约变更）——两侧服务端都已下发，判据不再靠调用方 reduce。**提级的后果：缺这个字段的载荷不再是「按过渡判据推导」，而是校验不通过**，反例见 dp-trust-01。调用方仍应保留从 steps[] 推导的能力，但那已是对非合规载荷的防御，不是契约路径（§4.6.7）。",
       "enum": ["success", "partial_success", "no_data", "failed", "not_applicable"]
     },
     "succeeded_steps": { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ 已算出未下发" },

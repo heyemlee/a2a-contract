@@ -2,6 +2,7 @@
   "route": "database_query",
   "confidence": 0.91,
   "queried_database": true,
+  "execution_status": "success",
   "has_risk": false,
   "degraded": false,
   "degrade_reason": "",

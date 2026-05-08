@@ -41,8 +41,14 @@ SQL 全挂了，但 `queried_database=true`、`has_risk=false`、`degraded=false
 | `trust` | `usable_as_source` / `partial` / `no_data` / `not_usable` / `n/a`——**期望的业务判定** |
 | `why` | 这条用例在防什么。**不写清楚就等于没有这条用例** |
 
-`expect` 与 `trust` 是两个正交的维度，不要混。`dp-trust-01` 是
+`expect` 与 `trust` 是两个正交的维度，不要混。`dp-trust-03` 是
 `expect: valid` + `trust: not_usable`——**合法但不可信**，正是最危险的那一格。
+
+> **这里原先举的是 `dp-trust-01`，v1.12 换掉了。** 它在 v1.12 随
+> `execution_status` 提级改判为 `expect: invalid`，不再落在那一格里。
+> 换个例子就行，但这件事本身说明了为什么这两维不能混：**同一份载荷的
+> `expect` 会随契约面变，`trust` 不会**——`dp-trust-01` 的业务判定从头到尾
+> 都是 `not_usable`，变的只是 schema 还拦不拦得住它。
 
 ## 加用例的规矩
 
