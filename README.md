@@ -1,178 +1,139 @@
-# A2A 接口契约（跨仓库共享）
+<div align="center">
 
-这里放 `ai-sql-agent`（A2A 服务端）与 `ai-helpdesk`（A2A 客户端）之间的接口契约。
+# A2A Contract
 
-放在两个仓库之外，是因为它**同时**约束两边：留在任何一侧都会变成
-"一方的文档"，而契约变更必须是双边事件。
+**让客服 Agent 与数据 Agent 在同一份契约下协作。**
 
-## 内容
+业务问题 → 受控查询 → 流式进度 → 可核验的结果
 
-| 路径 | 说明 |
-| --- | --- |
-| [`a2a-streaming-contract.md`](a2a-streaming-contract.md) | `message/stream` 流式契约。**唯一权威副本** |
-| [`CONSUMER-TESTS.md`](CONSUMER-TESTS.md) | 两侧 CI 各自必须跑的用例（A–F 六组，三个承载者共用一组） |
-| [`schema/`](schema/) | JSON Schema：artifact data part、progress 事件信封、`stage` 与 `database` 枚举 |
-| [`fixtures/`](fixtures/) | 跨仓库 golden fixtures：正例 + schema 反例 + 信任反例。清单在 `fixtures/index.json` |
-| [`fixtures/README.md`](fixtures/README.md) | fixtures 的目录约定：为什么 `trust-negative` 与 `schema-invalid` 分开放，各目录各是什么 |
-| [`tools/check_contract.py`](tools/check_contract.py) | 本仓库自检：schema 自校验 + fixtures 校验 + 文档内链接检查 + 版本号一致性。**四段判据只有这一个地方知道**，workflow 只负责调它 |
-| [`.github/workflows/contract.yml`](.github/workflows/contract.yml) | 调上面那条的 workflow。**它在 GitHub 上一次都没跑过**（账号级 Actions 停用，见下方「自检」），目前只是"CI 恢复后该跑什么"的记录 |
+[![Contract](https://img.shields.io/badge/Contract-v1.12-0891b2?style=flat-square)](a2a-streaming-contract.md) [![Transport](https://img.shields.io/badge/Transport-JSON--RPC_2.0_%2B_SSE-475569?style=flat-square)](#两个项目如何协作) [![Schema](https://img.shields.io/badge/Schema-JSON_Schema_2020--12-7c3aed?style=flat-square)](schema/)
 
-## 目录结构：**这几个路径是被下游硬编码的，不要重排**
+[协作链路](#两个项目如何协作) · [技术栈](#技术栈与职责) · [关键设计](#关键设计) · [接入](#快速接入) · [验证](#验证与当前边界)
 
-这个仓库看起来像"文档太多、该整理一下"，但它的布局是**接口的一部分**。
-两个实现仓库不是读这份 README，是直接按路径读文件：
+</div>
 
-| 下游位置 | 它按死路径读的东西 |
-| --- | --- |
-| `ai-sql-agent/tests/test_contract_fixtures.py` | `schema/*.schema.json`、`fixtures/index.json`、`schema/database-id.schema.json`、`schema/stage.schema.json`。仓库位置按 `A2A_CONTRACT_DIR` → `./.contract` → **同级目录** `../a2a-contract` 的顺序找 |
-| `ai-helpdesk/backend/tests/test_contract_fixtures.py` | 同上；同样退到同级目录 `../a2a-contract`，找不到就 skip（设 `A2A_CONTRACT_REQUIRED=1` 才报错） |
-| `ai-helpdesk/scripts/ci-local.sh` | 本机复现 CI 的入口，同样读 `../a2a-contract`，并自带一个 `CONTRACT_TAG` |
-| 两侧 `.github/workflows/ci.yml` | `clone --branch <tag>` 之后读 `.contract/fixtures/index.json` |
-| 两侧代码注释 | "见 a2a-contract 仓库 `a2a-streaming-contract.md`" |
+用户问“订单排到哪了”，客服需要知道什么时候查业务库、如何展示等待进度，以及查询结果是否足以支撑回答。本仓库定义这条跨服务边界：**请求怎么发、事件怎么收、结果怎么信任、版本怎么一起升级**。
 
-所以：
+| 仓库 | 职责 | 主要能力 |
+| --- | --- | --- |
+| [AI Helpdesk](https://github.com/heyemlee/ai-helpdesk) | 客服编排 · A2A 客户端 | 意图识别、混合检索、专家路由、回答守卫与人工工单 |
+| [AI SQL Agent](https://github.com/heyemlee/ai-sql-agent) | 数据查询 · A2A 服务端 | Schema 检索、跨库规划、SQL 生成、权限校验、只读执行与结果检查 |
+| **A2A Contract** | 两侧共享的接口契约 | 协议说明、JSON Schema、golden fixtures 与消费者测试要求 |
 
-- **`schema/`、`fixtures/`、`tools/`、`a2a-streaming-contract.md` 的位置不能动。**
-  把它们收进 `src/` 或 `docs/` 会让两侧在**下一次升 pin 时**整片变红——
-  而且红的地方在别人的仓库里，不在这里。
-- 已经打出去的 tag 里是旧布局。重排之后，钉旧 tag 的引用与钉新 tag 的引用
-  **不再同构**，附录 B 那句"钉住的引用必须一直取得到当时那一份"就废了。
-- 真要重排，那是一次**三仓库同步变更**，按 §6 的双边流程走，不是一次整理。
+两个应用独立运行；本仓库作为版本化依赖被两侧测试引用，无需部署一个“契约服务”。
 
-**这个仓库为"引用取不到 / 副本漂了"翻过四次车。重排目录是这个仓库能做的
-风险最高的操作，因为它一次性把所有引用都动了。**
+## 两个项目如何协作
 
-## 规矩
+![AI Helpdesk 与 AI SQL Agent 的 A2A 调用时序](docs/diagrams/a2a-sequence.zh-CN.svg)
 
-- 契约变更 = **双边事件**。任何一侧不得单方面修改后直接实现。
-- 两个仓库都不再各存一份副本，只引用这里，避免副本漂移。
-- 文档顶部的**状态行**（草案 / vX.Y）就是当前生效版本，也是判别权威副本的第一道判据。
-- **状态行里关于"做没做"的每一句话都要附可复核证据**：文件路径:行号 / 测试文件名 /
-  可重跑的命令。写不出证据的写成"待核实"，不要写成事实。这个仓库为此翻过两次车
-  （v1.2、v1.4），第三次的教训见契约附录 B 的自检表。
+[交互图 HTML](docs/diagrams/a2a-sequence.zh-CN.html) · [可编辑 JSON](docs/diagrams/a2a-sequence.zh-CN.archify.json) · [接入细节与代码依据](docs/a2a-integration.md)
 
-## 两侧怎么引用（**带 tag 或 commit，不要跟 main**）
+使用 [Archify](https://github.com/tt-a1i/archify) 生成。GitHub 直接展示 SVG；下载 HTML 后用浏览器打开，可缩放、查看节点、切换主题和导出。
 
-在代码注释或文档里引用时，写清楚**引的是哪一版**：
+**图示为启用 A2A 流式后的成功路径。Helpdesk 默认仍使用 `POST /query`，需要显式切换 transport。** 查询可包含多个数据库和多轮进度事件，图中将它们压缩为一次逻辑交互。
 
-```python
-# 契约见 a2a-contract 仓库的 a2a-streaming-contract.md（v1.12，tag v1.12 / commit <sha>）
-```
+1. **识别与委派。** Helpdesk 判断问题是否需要业务数据，通过 `order_data_query` 工具委派给 SQL Agent；知识类问题可直接走知识库。
+2. **能力发现。** 客户端读取 `/.well-known/agent.json`，依据 `capabilities.streaming` 选择 `message/stream` 或 `message/send`。
+3. **受控执行。** SQL Agent 检索业务 Schema、规划查询、生成 SQL，在权限和只读约束下执行；阶段进度由 Helpdesk 转为前端 SSE `progress` 事件。
+4. **验收与回答。** 客户端收到 artifact 和 `completed + final:true` 终态后，继续检查执行状态、风险和降级字段；客服据此组织回答，证据不足时回落或转人工。
 
-**只写版本号不够，只写 `main` 更不行。** 版本号会被下一版顶掉，`main` 会动；
-读注释的人需要能取到**当时那一份**。
+| 调用方式 | 用途 | 返回形式 |
+| --- | --- | --- |
+| `POST /query` | 当前默认的直接调用 | JSON 响应，共享相同的结果信任语义 |
+| `POST /a2a` · `message/send` | 不支持流式时的 A2A 路径 | JSON-RPC Task，包含结果 artifact |
+| `POST /a2a` · `message/stream` | 展示查询阶段进度 | JSON-RPC over SSE，依次返回任务、进度、artifact 和终态 |
 
-CI 里取 fixtures / schema 时钉在 tag 上：
+## 技术栈与职责
+
+| 层次 | 技术 | 在链路中解决什么问题 |
+| --- | --- | --- |
+| 客服控制台 | React 18 · TypeScript 5 · Vite 6 · Tailwind CSS 4 · TanStack Query 5 | 对话、阶段进度、工单与运维视图；通过 `fetch` 消费 POST SSE |
+| 服务与编排 | Python · FastAPI · Pydantic 2 · asyncio | 类型化请求、异步 I/O、客服专家编排；SQL Agent 使用独立查询 pipeline |
+| 客服知识检索 | PostgreSQL + pgvector · tsvector · RRF · rerank | 融合语义与精确词项召回，结合重排及证据充分性判断 |
+| 数据查询推理 | YAML 业务语义层 · BM25 + 向量检索 · SchemaGraph | 缩小 Schema 上下文、理解表间关系、规划跨库步骤与结果回填 |
+| 查询执行与约束 | SQLGlot AST · MCP 执行层 · SQLite / PostgreSQL | 表列授权、SQL 校验、只读执行、超时、行数上限与失败修复 |
+| 模型接入 | Anthropic / OpenAI 兼容协议 · HTTPX | 为意图识别、回答和 SQL 生成提供模型能力；协议不是权限边界 |
+| 状态与可观测性 | Redis · SQLite / PostgreSQL · OpenTelemetry · Prometheus · Grafana / Tempo / Loki | Helpdesk 管理短期状态和监控栈；两侧记录查询、步骤及关联标识 |
+| 跨服务协议 | HTTP · JSON-RPC 2.0 · SSE · JSON Schema | 分离调用、事件、结果结构与业务可信度，支持 transport 切换 |
+| 契约验证 | Python · jsonschema · referencing · pytest | 同一份 fixture 在两侧校验，覆盖合法、非法及“结构合法但不可信”的载荷 |
+
+版本以实现仓库的依赖清单为准：[Helpdesk 后端](https://github.com/heyemlee/ai-helpdesk/blob/main/backend/requirements.txt)、[前端](https://github.com/heyemlee/ai-helpdesk/blob/main/frontend/package.json)、[SQL Agent](https://github.com/heyemlee/ai-sql-agent/blob/main/pyproject.toml)。上述是整个系统的技术栈；本契约仓库运行自检只需 Python、`jsonschema` 与 `referencing`。
+
+## 关键设计
+
+| 设计 | 具体规则 | 解决的问题 |
+| --- | --- | --- |
+| **协议完成与业务成功分离** | artifact 不能单独代表成功；还需完成终态。业务层再判断 `execution_status` | 避免把中断流、部分结果或执行失败当作完整答案 |
+| **保守的信任判定** | `has_risk` / `degraded` 缺失或类型错误按不可信处理；字符串 `"false"` 不作为布尔值接受 | 避免宽松类型转换把坏数据升级为可信事实 |
+| **三种调用共享语义** | `stream`、`send`、`/query` 的结构化结果归一后使用同一组信任规则 | 切换调用方式时不悄悄改变证据标准 |
+| **有边界的回退** | 能力不支持或开流前 `-32004` 可走 `send`；流中失败不重发 | 避免重复执行、重复扣配额和等待时间叠加 |
+| **分层超时** | 流式客户端默认静默 20 秒、总时长 90 秒；外层工具预算需联动配置 | 区分仍在推进的慢查询与已失联的调用 |
+| **可独立验证的演进** | 固定 tag / commit，共享 schema 与 fixture；契约变化由两侧同步接入 | 防止一边升级、另一边仍按旧字段解释结果 |
+
+`execution_status` 区分 `success`、`partial_success`、`no_data`、`failed`、`not_applicable`。例如“查询成功但没有记录”与“根本没查成”需要不同回答；截断结果也不能被用来声称总数或全量统计。完整规则见 [权威契约](a2a-streaming-contract.md)。
+
+## 快速接入
+
+### 1. 固定契约版本
+
+在实现仓库根目录执行：
 
 ```bash
 git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
+export A2A_CONTRACT_DIR="$PWD/.contract"
+export A2A_CONTRACT_REQUIRED=1
 ```
 
-或加成 submodule（submodule 天然钉在 commit 上，最省心）：
+两侧读取同一份 `schema/` 与 `fixtures/index.json`。不要复制它们到实现仓库，也不要依赖会移动的 `main`。已有 `.contract` 时按[升级流程](docs/maintenance.md#升版本的时候)更新。
+
+### 2. 开启 A2A 协作
+
+Helpdesk 后端环境示例（两个服务均在本机运行）：
+
+```dotenv
+SQL_AGENT_URL=http://127.0.0.1:8000
+SQL_AGENT_TRANSPORT=a2a
+SQL_AGENT_TIMEOUT_S=90
+SQL_AGENT_A2A_SEND_TIMEOUT_S=45
+SQL_AGENT_A2A_SILENCE_S=20
+SQL_AGENT_A2A_HARD_S=90
+```
+
+SQL Agent 设置 `AI_SQL_A2A_STREAMING=true`；开启 API Key 鉴权时，在 Helpdesk 配置对应的 `SQL_AGENT_API_KEY`。两侧分别按自己的 README 启动。容器部署需使用实际可达的服务地址。
+
+这里 `SQL_AGENT_TIMEOUT_S=90` 让外层工具预算达到 92 秒，覆盖 90 秒流式硬上限；保持 `send` 预算 45 秒。只改 transport 会保留默认 47 秒外层预算，流式请求可能提前被截断。详见[超时与接入说明](docs/a2a-integration.md)。
+
+## 验证与当前边界
+
+在本仓库运行：
 
 ```bash
-git submodule add https://github.com/heyemlee/a2a-contract.git .contract
+python3 -m venv .venv
+.venv/bin/python -m pip install jsonschema referencing
+.venv/bin/python tools/check_contract.py
 ```
 
-**不要把 `schema/` 或 `fixtures/` 拷进实现仓库。** 拷贝就是副本，副本会漂——
-这正是这份契约当初被挪出来单独放的原因。
+自检包含 **schema、fixtures、链接、版本一致性**四段；两侧还须执行 [A–F 六组消费者测试](CONSUMER-TESTS.md)。反例既要被 schema 拒绝，也要验证调用方是否向“不可信”方向回落。
 
-### 升版本的时候
+- **验证状态。** 历史验收基于本机检查与可复核提交。2026-06-03 查阅本仓库 Actions，run 数仍为 0；不能把已有 workflow 描述为已执行的 CI 门禁。历史账号停用情况与替代流程见[维护说明](docs/maintenance.md#自检)。
+- **身份边界。** Helpdesk 隔离用户记忆和下游会话，默认以共享服务身份查询业务数据；可见数据仍由服务密钥策略决定，不等于按最终用户隔离业务数据。见 [Helpdesk 身份接入说明](https://github.com/heyemlee/ai-helpdesk/blob/main/docs/integrations/sql-agent-identity-requirements.md)。
+- **准确率边界。** 协议正确不能保证 SQL 语义正确。SQL Agent 的 2026-05-06 评测记录中，跨库准确率和静默错误率仍未达到发布门禁，见[原始测量记录](https://github.com/heyemlee/ai-sql-agent/blob/main/benchmark/baseline/2026-09-09/README.md)。
 
-改契约 = 两侧都要跟着改引用。顺序是：
+## 文档导航
 
-1. 本仓库改文档。**版本号要一次改齐五处**，`python3 tools/check_contract.py version`
-   会逐处核对，改漏哪一处它会点名：
-
-   | # | 在哪 |
-   | --- | --- |
-   | 1 | `a2a-streaming-contract.md` 的状态行 —— **这是唯一的真值来源** |
-   | 2 | 契约附录 A 变更记录的新增行 |
-   | 3 | `README.md` 版本表的新增行（本文件下方） |
-   | 4 | `fixtures/index.json` 的 `contract_version` —— **下游真正读的是这个** |
-   | 5 | 所有 `--branch vX.Y` 示例，以及 `CONSUMER-TESTS.md` 抬头的「配套：…」 |
-
-2. `python3 tools/check_contract.py` 全绿 → 合入 `main`；
-3. **打 tag（`vX.Y`）——这必须是这一版的最后一个动作。**
-   tag 消息里写清这一版改了什么、哪些条款还是缺口；
-4. 两侧各自把引用里的版本号和 commit 换掉，并把新增/变更的用例接进自己的 CI。
-   pin 一共五处，漏一处就会在那一侧红一条版本断言：
-
-   | 仓库 | 在哪 |
-   | --- | --- |
-   | ai-sql-agent | `tests/test_contract_fixtures.py` 的 `CONTRACT_TAG`；`.github/workflows/ci.yml` 的 `A2A_CONTRACT_TAG` |
-   | ai-helpdesk | `backend/tests/test_contract_fixtures.py` 的 `PINNED_TAG`；`.github/workflows/ci.yml` 的 `ref`；`scripts/ci-local.sh` 的 `CONTRACT_TAG` |
-
-   改完怎么验，见契约状态行下方的「怎么重新验一遍」——三条命令加三个实测踩过的坑
-   （尤其是 ai-sql-agent 必须在没有 `.env` 的环境里跑）。
-
-第 4 步没做完之前，**不要在状态行里声称"两侧已实现"**——那正是 v1.2 和 v1.4
-各自栽过的地方。
-
-> **第 3 步为什么要强调"最后一个动作"。** v1.10 就是打完 tag 之后又补了三笔提交
-> （`70fb56d`、`77cadca`、`75eafe8`），于是 tag `v1.10` 里的 `contract_version`
-> 永远停在 `v1.9`，下游钉它会红一条版本断言。而已经推送的 tag **不能移动**
-> （附录 B：钉住的引用必须一直取得到当时那一份），只能再补一个自洽的 tag ——
-> 那就是 v1.11 存在的全部理由，它的契约面与 v1.10 **逐字节相同**。
->
-> **补正想好了再打 tag；已经打了就别再往那一版上加东西。**
-> 真的漏了，补新 tag，不要动旧的。
-
-## 自检
-
-```bash
-pip install jsonschema referencing
-python3 tools/check_contract.py
-```
-
-四段，可以单独跑其中一段：
-
-| 段 | 跑什么 | 防的是 |
-| --- | --- | --- |
-| `schema` | schema 自己合法；契约点名的枚举真在 schema 里 | 正文表格写了、schema 没跟上 |
-| `fixtures` | 清单与文件对得上；**反例真的被拒** | 用例分叉；一条不报错的反例 |
-| `links` | §小节引用与文件路径都指向真实存在的东西 | 引用一个不存在的小节 / 文件 |
-| `version` | 每一处"当前钉哪一版"都等于状态行 | 版本号漂移（见下） |
-
-```bash
-python3 tools/check_contract.py version
-```
-
-**`version` 段是 v1.11 扩出来的，起因值得记住。** 它原先只比一处
-（`fixtures/index.json` 的 `contract_version`），而真正漂掉的是它没看的地方：
-`CONSUMER-TESTS.md` 抬头那句「配套：…（v1.5）」**活过了 v1.6–v1.10 五个版本**，
-调用方早在 v1.6 就把它写进交回契约的反馈清单，**写了也没人改**。
-原因不是谁不认真——**没有任何机器在看那一行**。现在它按形态收全五处：
-两张版本表的最新行、`contract_version`、`--branch` 示例、文档抬头的「配套：」。
-
-> 为了不给下一个人挖坑，`version` 段**只看会被复制粘贴去执行的行**：
-> Markdown 里 ``` 围栏内的行、YAML 里的非注释行。附录 A 的变更记录可以放心
-> 写"把 `--branch v1.12` 改成 `--branch v1.13`"，那是叙述，不会误报。
-
-[`.github/workflows/contract.yml`](.github/workflows/contract.yml) 在 push / PR / 打 tag 时
-调的就是不带参数的那一条。**workflow 里不再写第二份断言**——判据分散在两个地方，
-就等于没有一个地方知道判据的全集，v1.10 那次漂移漏掉的正是当时写在 workflow 里
-那段 bash 没覆盖的两处。
-
-**但这条 workflow 在 GitHub 上一次都没跑过。** 三个仓库的 Actions 都是账号级停用
-（`Actions has been disabled for this user`，run 数全是 0，仓库里改不动），
-所以它今天拦不住任何东西——带着红的提交照样能合、照样能打 tag。
-**在 Actions 恢复之前，真正的门禁只有一道：合 `main` 之前、打 tag 之前，本机把
-`python3 tools/check_contract.py` 跑到全绿。** 不要在任何地方写"CI 会拦住"。
-详情与查证过程见契约状态行下方的降级声明。
-
-## 版本
-
-| tag | 状态行 |
+| 入口 | 内容 |
 | --- | --- |
-| `v1.12` | **§4.4 的最后一步：`execution_status` 由可选提级为 `required`**——七条缺口到这一版才是真的全关。**这是一次 §6 契约变更**，两侧必须跟着动。十五份 fixture 补了该字段；**`dp-trust-01` 故意不补并由 C 组改判 B 组**，它从「缺字段会被静默推导」的样本变成「缺字段会被挡住」的反例（v1.9 的 C 组设计与它自己定的关闭判据在这一点上是打架的，本版做了取舍，理由见附录 A）。六个既有反例逐条重验过拒绝理由没被污染，`tools/check_contract.py` 新增两条断言守这件事 |
-| `v1.11` | **契约面与 v1.10 逐字节相同**，只补一个自洽的版本号：tag `v1.10` 里 `contract_version` 停在 `v1.9`（三笔补正落在打 tag 之后），下游钉它会红一条版本断言。`v1.10` 已推送不能移动，所以补 tag 不移 tag。两侧 pin 由 `v1.8` 直接改到这里。<br>**⚠️ 这个 tag 里写着「七条缺口全部关闭」，实为六条**——§4.4 的机器判据（`execution_status` 提级为 `required`）当时没达成。2026-05-06 在 `main` 上就地更正，**v1.12 把那一步做掉了**。本 tag 的契约面本身没问题，但要「七条全关」请钉 `v1.12` |
-| `v1.10` | 七条缺口全部关闭；**判据是降级的**——原计划「两侧 CI 在 GitHub 上绿一次」一次都没发生（账号级 `Actions has been disabled for this user`），实际判据是「提交可推送复核 + 本机按 CI 入口复现全绿」。**⚠️ 这个 tag 的 `contract_version` 停在 `v1.9`，不要钉它，钉 `v1.11`** |
-| `v1.9` | `dp-trust-01` 的进度标记挂错了对象——fixture 断判据、活载荷断进度，两件事拆开；新增 `dp-trust-07` |
-| `v1.8` | 把 `/query` 纳入契约（它是今天的默认路径，此前一直在保护范围外）；§4.6.5 币种改为按来源三分 |
-| `v1.7` | 两侧各实现一轮，暴露出契约自己的三个错——先改错，再记进度 |
-| `v1.6` | 两个双边决定落地：send 补第三档、`database` 由钉死枚举改为形状 + 清单 |
-| `v1.5` | 链路已通；七条条款未兑现，逐条在正文标了 ⚠️ 缺口 |
+| [权威契约](a2a-streaming-contract.md) | 生效状态、事件结构、结果语义、失败处理与双边变更规则 |
+| [A2A 接入导读](docs/a2a-integration.md) | 调用路径、超时预算、身份边界与固定提交的代码依据 |
+| [消费者测试](CONSUMER-TESTS.md) | 两侧必须实现的 A–F 六组测试 |
+| [Schema](schema/) · [Fixture 清单](fixtures/index.json) | 可执行的结构约束与跨仓库样本 |
+| [维护与发布](docs/maintenance.md) | 固定路径约束、升级顺序、历史版本与故障复盘 |
+| [图表来源与复现](docs/diagrams/README.md) | Archify 版本、生成命令与验证记录 |
 
-> v1.0–v1.4 没有 tag（这个仓库到 v1.5 之前是零 tag，而附录 B 却要求引用时带 commit——
-> 那条规矩当时没有可执行的落法）。历史版本请按附录 A 的变更记录找对应 commit。
+## 当前版本
+
+| tag | 变更 |
+| --- | --- |
+| `v1.12` | `execution_status` 提级为必填；两侧同步升级，缺字段的载荷由 schema 拒绝 |
+
+完整历史见[版本记录](docs/maintenance.md#版本)。本次 README 与图表整理不改变契约版本、schema、fixtures 或下游依赖的固定路径。
