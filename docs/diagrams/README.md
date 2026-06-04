@@ -12,6 +12,14 @@
 | [验证摘要](a2a-sequence.receipt.json) | 文件哈希、9 项检查与浏览器尺寸记录 |
 | [Archify 许可证](ARCHIFY-LICENSE.txt) | 随导出的运行时保留上游 MIT 许可证 |
 
+## 英文版
+
+默认英文 README 使用英文图，中文版使用上方的中文图；两版保持相同节点、消息和布局，只翻译展示文案。
+
+[English SVG](a2a-sequence.en.svg) · [Interactive HTML](a2a-sequence.en.html) · [Editable JSON](a2a-sequence.en.archify.json) · [Validation receipt](a2a-sequence.en.receipt.json)
+
+英文版同样通过 showcase 9/9、四种桌面尺寸检查与深浅主题视觉检查。复现时将下方命令中的 `zh-CN` 替换为 `en`。
+
 ## 生成与复现
 
 生成工具：[Archify](https://github.com/tt-a1i/archify)，固定提交 `5289f6867f048a7450ec5718f58459613a84cf41`（包版本 `2.17.0-dev.1`）。工具只用于文档生成，不是两个应用的运行依赖；本次未安装全局 skill。
