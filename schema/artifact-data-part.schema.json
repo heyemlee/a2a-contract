@@ -39,10 +39,10 @@
     "succeeded_steps": { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ 已算出未下发" },
     "failed_steps":    { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ result_summary.py:93 已算好" },
     "repaired_steps":  { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ result_summary.py:94" },
-    "result_truncated": { "$ref": "#/$defs/strictBoolean", "$comment": "§4.6.3 ➕ = any(steps[].truncated)。缺失按 true 处置。" },
+    "result_truncated": { "$ref": "#/$defs/strictBoolean", "$comment": "§4.6.3 ✅ = any(steps[].truncated)。缺失按 true 处置。" },
 
-    "as_of":        { "type": ["string", "null"], "format": "date-time", "$comment": "§4.6.4 🔨" },
-    "as_of_source": { "enum": ["query_time", "snapshot", "unknown"], "$comment": "§4.6.4 🔨" },
+    "as_of":        { "type": ["string", "null"], "format": "date-time", "$comment": "§4.6.4 ✅ 顶层取成功步骤里最早的时点" },
+    "as_of_source": { "enum": ["query_time", "snapshot", "unknown"], "$comment": "§4.6.4 ✅ 各步来源不一致时顶层为 unknown" },
     "currency":     { "type": ["string", "null"], "pattern": "^[A-Z]{3}$", "$comment": "§4.6.5 🔨 ISO 4217" },
 
     "steps": {
@@ -65,7 +65,7 @@
         "success":    { "$ref": "#/$defs/strictBoolean", "$comment": "§4.6.2。缺失按 false 处置。" },
         "row_count":  { "type": "integer", "minimum": 0 },
         "truncated":  { "$ref": "#/$defs/strictBoolean", "$comment": "§4.6.3。缺失按 true 处置。" },
-        "row_limit":  { "type": ["integer", "null"], "minimum": 1, "$comment": "§4.6.3 🔨 truncated=true 时必须有值" },
+        "row_limit":  { "type": ["integer", "null"], "minimum": 1, "$comment": "§4.6.3 ✅ truncated=true 时必须有值" },
         "sql":        { "type": "string" },
         "final_sql":  { "type": "string", "$comment": "实际执行的那条（修复后的）" },
         "error":      { "type": ["string", "null"], "$comment": "§4.6.2：null ⟺ success == true" },

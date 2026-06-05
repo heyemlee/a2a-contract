@@ -923,26 +923,32 @@ routing → retrieval → planning → generation → execution → validation
 > 三个数与 `steps[]` **必须自洽**：`succeeded_steps + failed_steps == len(steps)`。
 > 不自洽时调用方以 `steps[]` 为准，并按"数据可疑"处置。
 
-#### 4.6.3 结果截断（✅ 一半在线上）
+#### 4.6.3 结果截断（✅ 服务端已实现）
 
 链路上有**两道**截断闸，语义不同，排查时必须能分开：
 
 | # | 谁截的 | 字段 / 配置 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 我方按行截 | `steps[i].truncated`；上限 `max_rows` 默认 **10000**（`ai_sql_core/settings.py:261`） | ✅ |
-| 2 | 调用方按字符截 | `SQL_AGENT_MAX_CONTEXT_CHARS` 默认 **2000**（`ai-helpdesk/backend/api/main.py:1052`） | 调用方侧，**不是契约面**，写在这里只为提醒排查时有两道闸 |
+| 1 | 我方按行截 | `steps[i].truncated`；每条查询最多 **1,000** 行（`PipelineConfig.max_rows`，`src/ai_sql_agent/pipeline/objects.py:60`）。执行器多取一行判断是否截断，并把生效的上限写进 `row_limit`（`execution/postgres_executor.py:142-159`、`execution/sqlite_executor.py:93`） | ✅ |
+| 2 | 调用方按字符截 | `SQL_AGENT_MAX_CONTEXT_CHARS` 默认 **2000**（`ai-helpdesk/backend/app/api/main.py:1308`） | 调用方侧，**不是契约面**，写在这里只为提醒排查时有两道闸 |
 
-新增两个字段：
+> **别被 `AI_SQL_MAX_ROWS` 误导：** `core/settings.py:287` 里的 `max_rows`（环境变量
+> `AI_SQL_MAX_ROWS`，默认 10000）今天只写进启动日志（`api/app.py` 的 `api.startup`
+> 事件），**没有接到执行上**。改它不会改变上限，生效的是上面那个 1,000。
+> 本节 v1.5 版写的"默认 10000（`ai_sql_core/settings.py:261`）"指的就是这个没接上的配置，
+> 2026-06-05 按代码改正。
+
+两个字段（v1.5 定义，服务端已输出）：
 
 | 字段 | 类型 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `result_truncated` | boolean，顶层 = `any(s.truncated)` | ➕ | 让调用方一跳拿到，不用遍历 `steps[]` |
-| `steps[i].row_limit` | integer \| null | 🔨 | 被哪个上限截的。`truncated == true` 时**必须**有值——否则调用方无法判断"10000 行封顶"还是"被临时调小的上限截了" |
+| `result_truncated` | boolean，顶层 = `any(s.truncated)` | ✅ `api/result_summary.py:102`、`:220` | 让调用方一跳拿到，不用遍历 `steps[]` |
+| `steps[i].row_limit` | integer \| null | ✅ `execution/objects.py:36`、`api/result_summary.py:58` | 被哪个上限截的。`truncated == true` 时**必须**有值——否则调用方无法判断"1,000 行封顶"还是"被临时调小的上限截了" |
 
 **截断的表述后果**：`truncated == true` 时，任何"共有 N 条 / 全部 / 一共"的说法都不成立。
 调用方必须把它当成"至少 N 条"，且**不得**基于截断结果做求和、计数、比例类断言。
 
-#### 4.6.4 数据时点 `as_of`（🔨 服务端今天没有）
+#### 4.6.4 数据时点 `as_of`（✅ 服务端已输出）
 
 | 字段 | 类型 / 取值域 | 说明 |
 | --- | --- | --- |
@@ -953,13 +959,23 @@ routing → retrieval → planning → generation → execution → validation
 - `"snapshot"`：读的是快照 / 数仓 / 只读副本，`as_of` = 快照时点，**可能显著早于现在**。
 - `"unknown"` 或字段缺失：**不可信**。
 
-**现状：服务端完全没有这个概念**——`grep -rn "as_of\|as-of\|data_timestamp\|snapshot_at" ai-sql-agent`
-（排除 `.venv`）无命中。所以本节定义的是目标形态。
+**现状（2026-06-05 按代码核对）：服务端已经输出这两个字段。**
 
-**实现之前的处置（这一条现在就生效）：** `as_of` 为 `null` / 缺失时，
+- 每一步都带 `steps[i].as_of` / `steps[i].as_of_source`，取值在执行器里定
+  （`execution/sqlite_executor.py`、`execution/postgres_executor.py`，取值域见
+  `execution/data_time.py`）。执行器默认 `as_of_source = "query_time"`，因为今天读的都是主库；
+  只有给执行器挂上只读副本或快照库时才改成 `"snapshot"`，目前没有这样配置的库。
+- 顶层 `as_of` 取成功步骤里**最早**的那个时点——"这份数据至少有多旧"是唯一安全的读法；
+  各步来源不一致（一步主库、一步快照）时，顶层 `as_of_source` 降为 `"unknown"`
+  （`api/result_summary.py` 的 `_resolve_as_of`）。失败的步骤不参与。
+
+本节 v1.5 版写的"服务端完全没有这个概念"已经过时，2026-06-05 改正。
+
+**缺失时的处置（仍然生效）：** `as_of` 为 `null` / 缺失时，
 调用方**不得**向客户表述任何时点（"截至今天""目前""最新"）。
-今天之所以还没出事，是因为查的都是主库；接了只读副本或数仓之后，
-主从延迟会让"最新状态"变成几分钟到几小时前的状态，而链路上**没有任何字段能让调用方发现这件事**。
+今天查的都是主库，所以时点就是查询时刻；接了只读副本或数仓之后，
+主从延迟会让"最新状态"变成几分钟到几小时前的状态。那时调用方能靠的就是这两个字段：
+`as_of_source == "snapshot"` 时按 `as_of` 说"截至某时"，`"unknown"` 或缺失时不说时点。
 
 #### 4.6.5 币种与单位（🔨 服务端今天没有，且已经在被绕过）
 
