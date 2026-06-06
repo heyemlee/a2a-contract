@@ -36,9 +36,9 @@
       "$comment": "§4.6.1。✅ v1.12 提级为必填（§6 契约变更）——两侧服务端都已下发，判据不再靠调用方 reduce。**提级的后果：缺这个字段的载荷不再是「按过渡判据推导」，而是校验不通过**，反例见 dp-trust-01。调用方仍应保留从 steps[] 推导的能力，但那已是对非合规载荷的防御，不是契约路径（§4.6.7）。",
       "enum": ["success", "partial_success", "no_data", "failed", "not_applicable"]
     },
-    "succeeded_steps": { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ 已算出未下发" },
-    "failed_steps":    { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ result_summary.py:93 已算好" },
-    "repaired_steps":  { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ➕ result_summary.py:94" },
+    "succeeded_steps": { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ✅ 已下发（data_part）" },
+    "failed_steps":    { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ✅ 已下发（data_part）" },
+    "repaired_steps":  { "type": "integer", "minimum": 0, "$comment": "§4.6.2 ✅ 已下发（data_part）" },
     "result_truncated": { "$ref": "#/$defs/strictBoolean", "$comment": "§4.6.3 ✅ = any(steps[].truncated)。缺失按 true 处置。" },
 
     "as_of":        { "type": ["string", "null"], "format": "date-time", "$comment": "§4.6.4 ✅ 顶层取成功步骤里最早的时点" },
@@ -82,7 +82,7 @@
           "then": { "properties": { "error": { "type": "null" } } }
         },
         {
-          "$comment": "§4.6.3：truncated=true 时 row_limit 必须有值，否则调用方无法判断是被哪个上限截的。row_limit 本身仍是 🔨，所以这条约束在服务端实现前不会被触发（fixtures 里已备好用例）。",
+          "$comment": "§4.6.3：truncated=true 时 row_limit 必须有值，否则调用方无法判断是被哪个上限截的。服务端已输出 row_limit（执行器回填生效的上限），这条约束对线上载荷生效（fixtures 里有对应用例）。",
           "if": { "properties": { "truncated": { "const": true } }, "required": ["truncated", "row_limit"] },
           "then": { "properties": { "row_limit": { "type": "integer" } } }
         }

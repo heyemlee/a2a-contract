@@ -916,9 +916,9 @@ routing → retrieval → planning → generation → execution → validation
 
 | 字段 | 类型 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| `succeeded_steps` | integer ≥ 0 | ➕ | 服务端有等价量，搬一下即可 |
-| `failed_steps` | integer ≥ 0 | ➕ | `result_summary.py:93` 已算好，只是没进 artifact（对比 `ai_sql_a2a/server.py:203-211`） |
-| `repaired_steps` | integer ≥ 0 | ➕ | `result_summary.py:94` |
+| `succeeded_steps` | integer ≥ 0 | ✅ | 已进 artifact（`api/result_summary.py` 的 `data_part()`，`/query` 与 A2A send / stream 共用） |
+| `failed_steps` | integer ≥ 0 | ✅ | 同上，已进 artifact |
+| `repaired_steps` | integer ≥ 0 | ✅ | 同上，已进 artifact |
 
 > 三个数与 `steps[]` **必须自洽**：`succeeded_steps + failed_steps == len(steps)`。
 > 不自洽时调用方以 `steps[]` 为准，并按"数据可疑"处置。
