@@ -1,6 +1,23 @@
 # A2A 流式契约：`message/stream`
 
-> 状态：**v1.12，七条缺口全部关闭——这次是真的七条**，判据是「提交可复核 + 本机按 CI 入口复现全绿」，**不是「GitHub CI 绿过」**（那件事一次都没发生，原因见下）。
+> 状态：**v1.13：调用方断开后服务端在下一个检查点停下（§5.4），新增传输终态 `canceled`（§4.4），限流类 429 的错误码改为 `-32029`（§3.2 / §5.5）。** 七条缺口仍和 v1.12 一样全部关闭；判据仍是「提交可复核 + 本机按 CI 入口复现全绿」。
+>
+> **v1.13 是一次 §6 契约变更**：三项都改了我方承诺的行为，两侧都要跟着动 pin。
+>
+> | 项 | 契约 | 服务端（ai-sql-agent `5f1d154`） | 调用方（ai-helpdesk `5a1aa66`） |
+> | --- | --- | --- | --- |
+> | 断开即取消 | §5.4 改写；`message/stream`、`message/send`、`/query` 三个承载者一起写进来 | `AI_SQL_CANCEL_ON_DISCONNECT` 默认开；`tests/test_run_cancel.py::A2ACancelTest` | 无：断开之后它不再读任何东西 |
+> | `canceled` 终态 | §4.2 / §4.4 / §5.1；新增 `schema/terminal-event.schema.json` 与 `fixtures/terminal-event/` 五个用例 | 流式终态和 send 返回的 Task 都发 `canceled`；`tests/test_contract_fixtures.py::TerminalFrameTest` | 不改代码（非 `completed` 一律回落）；补了 `canceled` 的消费用例 |
+> | `-32029` | §3.2 / §5.5 写明码值 | 限流、配额、流式准入满了：429 + `-32029`；`tests/test_a2a_server.py` | 不改代码（它不按 `-32001` 分支） |
+>
+> **本机复现（2026-06-09；两侧 pin 指 v1.13，契约目录指向本版）：**
+>
+> - 契约 `tools/check_contract.py` 全过；
+> - ai-sql-agent `pytest`：1235 passed、27 skipped。跳过的都要 `AI_SQL_PGVECTOR_DSN`；PostgreSQL 取消测试另外在 PostgreSQL 16 上跑过；
+> - ai-helpdesk 后端：ruff 干净，`pytest` 1346 passed、30 skipped；接上本版契约后，`test_contract_fixtures.py` 和 `test_a2a_client.py` 98 passed。
+>
+> **GitHub CI：** ai-sql-agent 的 Actions 现在能跑了；ai-helpdesk 这次没有核对。
+> 两侧随本版推送的那次 CI 结果写不进这一行：打 tag 必须是这一版的最后一个动作（`docs/maintenance.md`）。
 >
 > **v1.12 只做一件事：把 §4.4 欠的那一步补上。** v1.10 与 v1.11 都写着「七条**全部**
 > 关闭」，那句话说过头了——§4.4 的关闭判据是 v1.9 特意挪到契约仓库这一侧的一个动作
@@ -468,6 +485,20 @@ Content-Type: application/json
 
 限流（429）同理，见 §5.5。
 
+错误码（v1.13 写明）：
+
+| 情况 | HTTP | JSON-RPC `error.code` |
+| --- | --- | --- |
+| 鉴权失败（缺 key / key 无效 / 无权限） | 401 / 403 | `-32600` |
+| 限流、每日配额、流式并发准入满了 | 429（带 `Retry-After`） | **`-32029`** |
+| 流式开关关着、`tasks/*` | 200 | `-32004`（§6.2 / §7） |
+
+> **v1.13 把 429 的码从 `-32001` 改成了 `-32029`。** `-32001` 在 A2A 0.2 规范里是
+> TaskNotFoundError，§7 自己也按这个意思用它（「`-32001`（任务不存在）值得重试或降级」）。
+> 一旦支持任何 `tasks/*` 方法，同一个码就会有两种意思。`-32029` 落在服务端自定义的
+> `-32000..-32099` 区间，并避开规范已经占用的 `-32001..-32007`。
+> 调用方不按 `-32001` 分支（它只特判流打开之前的 `-32004`），所以这次改码不用动调用方代码。
+
 ### 3.3 trace_id
 
 trace_id 在流式下走三个地方，值完全相同：
@@ -517,8 +548,10 @@ data: {"jsonrpc":"2.0","id":"req-1","result":{ ...事件... }}
 1×  task              首帧：taskId / contextId，state=submitted
 N×  status-update     进度，final=false，state=working
 1×  artifact-update   结果载荷，lastChunk=true
-1×  status-update     终态，final=true，state=completed|failed
+1×  status-update     终态，final=true，state=completed|failed|canceled
 ```
+
+（`canceled` 是 v1.13 新增的，取值见 §4.4。没有载荷的终态——`failed`、`canceled`——之前不发 `artifact-update`。）
 
 保证的部分：
 - 首帧一定是 `task`；
@@ -591,6 +624,15 @@ N×  status-update     进度，final=false，state=working
 | --- | --- | --- |
 | `completed` | **载荷完整送达**：artifact 已发出，pipeline 正常返回。**不表示查询成功** | pipeline 未抛异常地跑完 |
 | `failed` | **没有可用载荷**：pipeline 抛异常、准入被拒、流中途出错（§5.2） | 只有这些情况 |
+| `canceled` | **没有可用载荷**：流打开期间，任务被**本连接以外的途径**取消（v1.13 新增） | 服务端取消接口、运维取消、服务关停。**本连接自己断开时不发**——这时已经发不出去（断开之后我方怎么做见 §5.4） |
+
+> **`canceled` 的几点约定（v1.13）：**
+>
+> - 拼写跟 A2A 0.2 规范的 TaskState 走，是 `canceled`，不是 `cancelled`。取值本来就在规范里，不越出 §10 的 0.2 子集。
+> - `metadata.error` 照带，说明是谁取消的，形如 `cancelled: api`。这里的 `cancelled:` 是取消原因的写法，不是 `state` 的取值。
+> - v1.13 之前，同样的情况发的是 `failed` + `metadata.error = "cancelled: …"`。那在 v1.12 下合法，现在改发 `canceled`。
+> - `message/send` 返回的 Task，`status.state` 用同一套三个取值。
+> - 形状由 `schema/terminal-event.schema.json` 约束（v1.13 新增；v1.12 之前终态没有 schema，只靠两侧各自的测试守着），样本在 `fixtures/terminal-event/`。
 
 > v1.0–v1.4 这张表写的是「`completed` = 所有步骤成功 / `failed` = 任一步骤失败」，
 > 那是**业务**终态的定义，被放进了一个**传输**字段。代码从来不是那样实现的，
@@ -1195,6 +1237,7 @@ routing → retrieval → planning → generation → execution → validation
 | --- | --- |
 | 流正常结束但没有终态事件 | 迭代器耗尽 且 未见 `final:true` |
 | 终态事件是 `state:"failed"` | `final:true` + `failed` |
+| 终态事件是 `state:"canceled"`（v1.13） | `final:true` + `canceled`。上面那句「其余一切情况都回落」本来就覆盖它；写出来是为了一眼看到，不必自己推 |
 | 连接中断 / 协议错 / JSON 解析失败 | httpx 抛异常 |
 | 静默超过 20s | 调用方的自适应超时（收到事件会续命）。**仅流式路径**，见 §1 |
 | 总时长超过 90s | 调用方的硬上限，与有没有事件无关 |
@@ -1229,13 +1272,38 @@ routing → retrieval → planning → generation → execution → validation
 
 **在新口径下这件事已经很少发生**：实测 max 68.3s < 90s 硬上限，所以只有极端长尾才会命中。以下描述的是那个长尾。
 
-调用方超时（静默 20s 或总长 90s）并断开连接后：
+> **v1.13 改写了本节。** v1.12 写的是「我方**不会**中止查询。整条 pipeline 是同步的，没有取消点」。
+> 服务端有了取消检查点，这条改为：**调用方断开后，我方在下一个检查点停下。**
 
-- 我方**不会**中止查询。整条 pipeline 是同步的，没有取消点；
-- SQL 会跑完，**审计记录照常写入**，**每日配额照常计入**，token 照常消耗；
-- 只是结果没人接收了。
+**适用范围：三个承载者**——`message/stream`、`message/send`、直连 `/query`。后两者以前断开后同样不中止，
+只是契约没写过；调用方的默认 transport 就是 `/query`，所以三条一起写清楚。
 
-含义：**超时会静默烧掉一份配额。**
+调用方断开连接后（静默 20s、总长 90s、网络中断、主动关闭），我方在**下一个检查点**停下，不再发起新的模型调用和 SQL：
+
+| 检查点 | 延迟 |
+| --- | --- |
+| 阶段边界 | 立即 |
+| 两次模型调用之间、重试退避中 | 立即 |
+| SQL 执行中（SQLite 进度回调；PostgreSQL 服务端取消） | 立即 |
+| 已经发出去的那一次模型调用 | **打断不了**。最坏要等它返回，上限是模型调用超时（今天 60s），返回结果丢弃 |
+
+> **实测（2026-06-09，真实模型）。** 服务端经自己的取消接口取消了 6 次，取消分别落在 routing、检索、规划等阶段：
+> 从收到取消到运行结束 **0.07–2.7s**，每次都等于那一次在途模型调用剩下的时间，再加不到 8ms；
+> 取消之后没有再发起任何模型调用。断开触发的取消走的是同一套检查点。
+> SQL 执行中取消在 PostgreSQL 16 上有测试：服务端 `tests/test_run_cancel.py::PostgresExecutorCancelTest`。
+
+**审计与配额：**
+
+- 照写一条审计，`status_code = 499`，`error` 以 `cancelled:` 开头；
+- **每日配额照计一份**，§5.5 不变；
+- token 只计断开前已经发出的调用（外加那一次在途调用）。
+
+含义：**超时仍会烧掉一份配额**——配额照计；但不再烧完整的 token，断开之后最多再花掉那一次在途调用。
+
+**服务端开关：** `AI_SQL_CANCEL_ON_DISCONNECT`，三条入口共用，v1.13 起默认开。
+关掉就回到 v1.12 的行为（断开后不中止，跑完为止）——那是降级，不需要调用方配合。
+
+**对调用方不可见：** 它断开之后不再读任何东西。下面「三重限制」的论证不受影响。
 
 三重限制让这件事的实际损失接近于零：
 
@@ -1262,7 +1330,10 @@ routing → retrieval → planning → generation → execution → validation
 
 **一次 `message/stream` = 一次 `/query`**：一个令牌、一条审计、一份配额。与 `message/send` 完全等价，不打折也不加倍。
 
-限流命中时在流打开之前返回 429（含 `Retry-After` 头），走 §3.2 的 JSON 错误路径。
+限流命中时在流打开之前返回 429（含 `Retry-After` 头），JSON-RPC 错误码 **`-32029`**，走 §3.2 的 JSON 错误路径。
+每日配额用尽、流式并发准入满了，也是 429 + `-32029`。（v1.13 写明码值；之前用的 `-32001` 和 A2A 规范的 TaskNotFoundError 撞码，见 §3.2。）
+
+被取消的请求（§5.4）照计一份配额，审计 `status_code = 499`。
 
 ---
 
@@ -1324,14 +1395,14 @@ routing → retrieval → planning → generation → execution → validation
 
 | 能力 | 做不做 | 原因 |
 | --- | --- | --- |
-| **断线续传 / `Last-Event-ID`** | ❌ 不做 | 事件不带 `id:` 字段。续传要求服务端保留事件缓冲并支持按 offset 重放，而我方的查询是一次性的、不可重放的。断了就重发请求。 |
-| **`tasks/resubscribe`** | ❌ 不做 | 继续返回 `-32004`。同上：没有可重新订阅的持久事件流。 |
-| **`tasks/cancel`** | ❌ 不做 | 继续返回 `-32004`。pipeline 是同步的，没有取消点；假装支持会得到一个"返回成功但活还在跑"的假接口，比明说不支持更糟。见 §5.4。 |
+| **断线续传 / `Last-Event-ID`** | ❌ 不做 | 事件不带 `id:` 字段。v1.13 起服务端有了按序号的运行事件日志，技术上能续传；但调用方没有重连逻辑，新增的面（重放边界、repair 的递增判据怎么算）比收益大。**暂不需要，不是做不到。** 断了就重发请求。 |
+| **`tasks/resubscribe`** | ❌ 不做 | 继续返回 `-32004`。理由同上：暂不需要。 |
+| **`tasks/cancel`** | ❌ 不做 | 继续返回 `-32004`。v1.13 起服务端有取消点了（§5.4），但调用方用不上它：断开本身就会取消，控制台走服务端自己的取消接口。**暂不需要，不是做不到。** |
 | **答案 token 级增量（delta）** | ❌ **永久不做**（不是"v1 不做"） | 见下方专条。这是设计边界，不是取舍。 |
 | **push notifications** | ❌ 不做 | Card 保持 `pushNotifications:false`。 |
 | **进度百分比 / ETA** | ❌ 不做 | 事件数量本身不稳定（§4.2），任何百分比都是编的。 |
 | **事件重投递 / at-least-once** | ❌ 不做 | 尽力而为。丢了就是丢了，靠 §5.1 的终态判据兜底。 |
-| **`tasks/get`** | ❌ 不做 | **恒返回 `-32004`，与副本数无关。** 我方根本不存任务状态：`ai_sql_a2a/server.py:359-362` 把 `tasks/get` 与 `tasks/cancel`、`tasks/resubscribe` 并列在同一张不支持表里；`grep -n '_TASKS\|task_store' ai_sql_a2a/server.py` 无命中。**调用方不要依赖 `tasks/get`**，终态事件里已经有全部结果。 |
+| **`tasks/get`** | ❌ 不做 | **恒返回 `-32004`，与副本数无关。** v1.13 起服务端有了运行记录，但那是服务端自己的接口，不在契约面上；`tasks/get` 只有和请求去重搭配才有意义（断开不取消的请求才需要回来取结果），而 §5.4 之后断开就取消。服务端代码里它仍和 `tasks/cancel`、`tasks/resubscribe` 并列在同一张不支持表里（`src/ai_sql_agent/a2a/server.py` 的 `a2a_endpoint`）。**调用方不要依赖 `tasks/get`**，终态事件里已经有全部结果。 |
 
 > **v1.5 改了 `tasks/get` 这一行的性质，不只是措辞。** v1.0–v1.4 把它写成
 > "⚠️ 已知缺陷 / 多副本下会大概率 `-32001`"，暗示单副本下可用、多副本下不可靠。
@@ -1479,6 +1550,11 @@ routing → retrieval → planning → generation → execution → validation
 | `message/stream` 移出 `-32004` 列表 | `tasks/cancel`、`tasks/resubscribe` 留在里面 | ✅ **已做**。现在那张表在 `ai_sql_a2a/server.py:359-362`，`tasks/get` 也在里面（§7 已按实际改写） |
 | 新增 stream handler | 事件构造 + 顺序保证 + 中途失败补终态 | ✅ **已做**。`_stream_events` 在 `ai_sql_a2a/server.py:282`，失败补终态在 `:322` |
 | `AI_SQL_A2A_STREAMING` 开关 | 新增 | ✅ **已做**。`ai_sql_core/settings.py:184`（`a2a_streaming: bool = True`，默认开；`:185-197` 的 docstring 记了 v1.3 阻断解除的两次实机演练） |
+
+> **v1.13 的措辞同步。** 进度事件的来源仍是 `trace.stage()` 的 sink，服务端没有改它。
+> 服务端新增的运行事件日志（`ai_sql_runs` / `ai_sql_run_events`，按序号记一次请求的全过程）
+> 是另一条旁路，**不在契约面上**：进度事件里不加 `run_id` / `seq`，`progress-event.schema.json` 不变。
+> v1.13 在服务端动的三处（断开即取消、`canceled` 终态、`-32029`）见附录 A 的 v1.13 行。
 
 **还没做的两件事**，都在 §4.6 里定义好了形态：
 
@@ -1740,6 +1816,7 @@ python3 -c 'import os; print(min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
+| v1.13 | 2026-06-09 | **三项双边变更：断开即取消（§5.4）、`canceled` 终态（§4.2 / §4.4 / §5.1）、429 改用 `-32029`（§3.2 / §5.5）。**<br>**起因：** 服务端加了每次请求的运行记录和取消检查点（阶段边界、模型调用之间、SQL 执行中），从此**能**在调用方断开后停下，而 v1.12 §5.4 写的是"不会停"。这一条不改，服务端只能一直关着这个能力，否则就违反契约。<br>**§5.4：** 三个承载者（`message/stream`、`message/send`、直连 `/query`）都在下一个检查点停下；已经发出去的那一次模型调用打断不了，上限是模型调用超时。实测 6 次取消，停下用时 0.07–2.7s，每次都等于在途调用剩下的时间。审计照写（499），配额照计一份，§5.5 不变。服务端开关 `AI_SQL_CANCEL_ON_DISCONNECT` 默认开，关掉就回到 v1.12 的行为。<br>**§4.4：** `canceled` 只在流打开期间、被本连接以外的途径取消时发（服务端取消接口、运维、关停）；本连接自己断开时发不出去。拼写跟 A2A 0.2 规范走（`canceled`），`metadata.error` 照带，形如 `cancelled: api`；send 返回的 Task 用同一套取值。v1.12 之前同样的情况发 `failed` + `cancelled: …`。<br>**终态第一次有了 schema：** 新增 `schema/terminal-event.schema.json`（状态 ∈ `completed` / `failed` / `canceled`），以及 `fixtures/terminal-event/` 三正两反；F 组从此有 fixture。`tools/check_contract.py` 新增两条断言：终态枚举恰为这三种，F 组至少有一条用例。<br>**§3.2 / §5.5：** 限流、每日配额、流式并发准入满了，统一回 429 + `-32029`（带 `Retry-After`）。原来的 `-32001` 在 A2A 规范里是 TaskNotFoundError，§7 自己也按这个意思用它。<br>**§7：** `tasks/cancel`、`tasks/get`、`tasks/resubscribe`、断线续传仍返回 `-32004`，只把理由从"做不到"改为"暂不需要"。**§8.2：** 补一句措辞同步：运行事件日志是旁路，不在契约面上，进度事件不加 `run_id` / `seq`。<br>**不变的部分：** delta 永久不做；`progress-event.schema.json`、data part、三承载者载荷同构、`protocolVersion` `0.2` 都不变。<br>**两侧同步：** ai-sql-agent 两处 pin、ai-helpdesk 三处 pin 由 `v1.12` 改到 `v1.13`。服务端 `5f1d154` 实现三项；调用方 `5a1aa66` 不改代码，只改 pin，并补终态 schema 与 `canceled` 的消费用例。**判据仍是降级的**：本机按两侧 CI 入口复现全绿（数字见状态行）；本版推送后的 GitHub CI 结果写不进 tag。 |
 | v1.12 | 2026-05-08 | **§4.4 的最后一步做掉了，七条缺口现在是真的全关。**<br>**这是一次 §6 契约变更**，不是纯文字版：`schema/artifact-data-part.schema.json` 的 `required` 新增 `execution_status`。v1.9 特意把这条缺口的关闭判据挪到契约仓库这一侧（「提级为 `required` + 现存 fixture 补齐该字段，那一个提交就是证据」），图的是不依赖任何一侧的测试标记；但那一步一直没做，而 v1.10 / v1.11 的状态行都写着「七条**全部**关闭」——2026-05-06 先发了一版只改文字的更正（`444c242`、`d6e6087`），本版把动作补上。<br>**`dp-trust-01` 由 C 组改判到 B 组，这是本版唯一的语义分叉，值得记住。** v1.9 设计 C 组时让它**故意不带** `execution_status`，用来覆盖 §4.6.7 的推导路径（`status_source == "derived"`），并写明「如实断言，这是正确期望，不是缺陷……任何时候都不许放宽」。而同一份 CONSUMER-TESTS 里的关闭判据又要求「现存 fixture 补齐该字段」——**补了它，C 组这条覆盖就没了；不补，提级后它就是非法载荷**。两句话在同一份文档里打架，v1.9 写判据时没注意到会撞掉自己刚设计的分组。本版的取舍：**不补字段，改判到 B 组**，它从「缺字段会被静默推导」的样本变成「缺字段会被挡住」的反例，唯一的拒绝理由就是缺这个字段；C 组 `failed` 这一档由 `dp-trust-07` 接手（它本来就带着）。**文件路径没动**——两侧按字面路径读它，挪文件会红在别人仓库里（附录 B 的硬编码路径清单）。<br>**十五份 fixture 补了字段**，值按 §4.6.1 的判据逐份算（`dp-valid-02` 走对话路径 → `not_applicable`；`dp-trust-02` 一成一败 → `partial_success`；`steps == []` 的几份 → `failed`）。<br>**六个既有反例逐条重验了拒绝理由。** 多一条必填就是给每个反例多一个被拒理由，「这条反例真的在保护它声称保护的东西」会因此悄悄失效——这是 v1.11 那次更正就预判到的坑。六份都补了该字段，实测各自仍只因原来那一个理由被拒；`tools/check_contract.py` 新增一条断言把它守死（除 `dp-trust-01` 外，任何反例的拒绝理由里出现 `execution_status` 即失败），另新增「`execution_status` ∈ `required`」的断言作为本条缺口的机器判据。<br>**§4.6.7 的过渡判据对这个字段作废**（本节最后一句本来就写了「提级即作废」）。作废的是「推导出来的结论可以照常采信」，**不是推导本身**：服务端出 bug、版本错配、中间件吞字段都会让不合规载荷真的出现，那时仍要靠 `steps[]` 说清楚「查挂了」而不是崩掉或静默采信，所以两侧的推导代码都保留，只是结论一律按不可信处置。`result_truncated` 等其余 🔨/➕ 字段的过渡判据不受影响。<br>**两侧同步**：ai-helpdesk 三处 pin、ai-sql-agent 两处 pin 由 `v1.11` 改到 `v1.12`；两侧各有针对 `dp-trust-01` 的断言要跟着改判（详见两仓库本版提交）。**判据仍是降级的**——GitHub CI 至今一次没跑过（账号级 Actions 停用），本版同样只能靠「提交可复核 + 本机按各自 CI 入口复现全绿」。 |
 | v1.11 | 2026-05-06 | **补一个自洽的 tag，让下游能真的钉住。**契约面与 v1.10 **逐字节相同**（`schema/` 与全部 fixture 载荷零改动），本版不是 §6 契约变更，两侧无需改消费代码。<br>**起因**：tag `v1.10` 的 `fixtures/index.json` 里 `contract_version` 停在 `v1.9`——三笔「v1.10 补正」（`70fb56d` 查到 Actions 停用的确切原因、`77cadca` 补上版本一致性自检、`75eafe8` 记录 ai-sql-agent 已合入 `main`）都落在打完 tag 之后。下游按 `contract_version` 判断「拉到的是不是钉的那一版」，**所以两侧把 pin 从 v1.8 改到 v1.10 会红一条**，而红的不是契约面，是版本号。<br>**为什么不移动 `v1.10`**：它已经推送到 GitHub（`git ls-remote --tags origin` 可验）。附录 B 的规矩是「钉住的引用必须一直取得到当时那一份」——移动已发布的 tag 会让这条规矩失效，而这个仓库上一版刚刚为了同一个理由用 merge 而不是 squash 合的 PR。**宁可多一个 tag，不动已经发出去的那个。**<br>**为什么不是 `v1.10.1`**：`tools/check_contract.py` 的版本正则是 `v\d+\.\d+`，对 `v1.10.1` 会截出 `v1.10` 再与 `index.json` 比对，自检反而会红——这个仓库的版本约定就是两段式，补丁号没有位置。<br>**两侧同步**：ai-helpdesk 三处（`backend/tests/test_contract_fixtures.py` 的 `PINNED_TAG`、`.github/workflows/ci.yml` 的 `ref`、`scripts/ci-local.sh` 的 `CONTRACT_TAG`）、ai-sql-agent 两处（`tests/test_contract_fixtures.py` 的 `CONTRACT_TAG`、`.github/workflows/ci.yml` 的 `A2A_CONTRACT_TAG`）全部由 `v1.8` 改到 `v1.11`，**跳过 v1.9 / v1.10 两版**：v1.9 新增的 `dp-trust-07` 两侧早已兼容（v1.10 的复核已实测过），所以这是一次纯粹的版本号对齐。<br>**仓库整理（本版一并做掉，不动契约面）**：`git diff v1.10 v1.11 -- schema/ fixtures/` 仍然只有 `index.json` 那一行，以下四项都在契约面之外。<br>**① 版本一致性自检由「一处」扩到「五处」。** v1.10 补的那条只比 `fixtures/index.json`，而真正漂掉的是它没看的地方：`CONSUMER-TESTS.md` 抬头的「配套：…（v1.5）」**活过了 v1.6–v1.10 五个版本**，末尾的 `--branch v1.9` 也停在两版之前。**调用方早在 v1.6 就把前一条写进交回契约的反馈清单，写了也没人改——因为没有任何机器在看那一行。** 现在 `tools/check_contract.py version` 按**形态**收全五处：两张版本表的最新行、`contract_version`、`--branch` 示例、文档抬头的「配套：」。五处都做过反向验证（故意改坏，确认每一处都真的报错）——附录 B 自检表第 5 条，也是 `fixtures/README.md` 那条「反例必须真的被拒」用在自检脚本自己身上。<br>**为免给下一个人挖坑**，该段只看**会被复制粘贴去执行的行**（Markdown 的 ``` 围栏内、YAML 的非注释行）：附录 A 这类叙述历史的正文会原样写出旧版本号，照字面扫全文会把「把 `--branch v1.11` 改成 v1.12」这种正确的变更记录判红。<br>**② CI 里那段 bash 版本检查删掉，判据收归 `tools/check_contract.py` 一处。** 它当时只比「状态行 vs 附录 A」两处，而漂掉的正是它没覆盖的第三、第四处——**判据分散在两个地方，就等于没有一个地方知道判据的全集。**<br>**③ README 新增「目录结构：这几个路径是被下游硬编码的，不要重排」**，列出两侧按死路径读的四类位置（`schema/*.schema.json`、`fixtures/index.json`、同级目录回退 `../a2a-contract`、CI 的 `.contract/fixtures/index.json`）。重排目录是本仓库风险最高的操作——它一次性动掉所有引用，且红在别人的仓库里。真要做，那是一次三仓库同步变更，走 §6。<br>**④ 升版本流程补上「打 tag 必须是这一版的最后一个动作」**，附 v1.10 的原始病历（打完 tag 又补三笔 ⇒ tag 里的版本号永远停在上一版 ⇒ 只能补新 tag）。另新增 `.gitignore`，清掉 `fixtures/` 下两个混在夹具目录里的空 `.claude/.cc-writes/` |
 | v1.10 | 2026-05-05 | **七条缺口全部关闭；判据如实降级并写明。**<br>两侧提交已推送：ai-helpdesk `main` = `e594655`（17 笔）、ai-sql-agent 分支 `feat/p0-authorization-and-business-outcome` = `6ab26e6`（11 笔，PR heyemlee/ai-sql-agent#1）。本机按各自 CI 入口复现：helpdesk 后端 675 passed / 2 skipped / 1 xfailed、契约用例 75 passed / 1 xfailed、前端 48 passed、**生产构建成功**；sql-agent **`Ran 550 tests … OK`**（真实 PostgreSQL 16）；契约自检 25 个 fixtures 全过。<br>**§4.5 的 normalization 缺口用机器判据关闭**：`schema/stage.schema.json` 新增 `emitted-2026-09-08`（九个，等于 `contract-declared`），`tools/check_contract.py` 的断言由「实发必须是声明的真子集」改为「当前实发必须等于声明」——**改这一组的这次提交就是关闭证据**。历史组 `emitted-2026-09-04`（八个）保留做对照且仍断言为真子集，不许被「修」成九个：它是那条缺口存在过的证据。<br>**⚠️ 判据是降级的。** 原计划是「两侧 CI 在 GitHub 上绿一次」，**那件事一次都没发生**——三个仓库（含本仓库一个刚建刚推、GitHub 确实读到了的 workflow）的 repo 级 Actions 全是 `enabled: true`、workflow `active`，而 run 数全是 **0**。指向账号级 Actions 策略 / 计费，仓库里改不动。实际判据因此是**「提交可推送复核 + 本机按 CI 入口复现全绿」**：**它证明了检查内容是对的，没证明检查会被强制执行**——这些门禁目前不是 required check，带着红的东西也照样能合。状态行下方加了这条声明，**CI 恢复之前不许删**。<br>**新增「怎么重新验一遍」**：三条可直接跑的命令，外加实测踩到的三个坑——① ai-sql-agent 必须在**没有 `.env`** 的环境里跑（它的配置隔离写在 `tests/conftest.py`，是 **pytest fixture**，而 CI 入口是 `unittest discover`，**unittest 不加载 conftest**；本机有 `.env` 时实测 29 failures + 3 errors，断言变成了「你的 `.env` 配了什么」）；② PostgreSQL 必须映射到宿主机 **5432**（`test_ops_readonly.py` 的只读角色 DSN 端口写死）；③ 契约 tag 要与被测仓库钉的一致——给 ai-sql-agent（钉 v1.8）喂 v1.9 时**只有版本断言一条失败、其余全过**，包括 v1.9 新增的 `dp-trust-07`，说明消费端已兼容，只差改 pin |

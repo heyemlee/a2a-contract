@@ -52,7 +52,7 @@
 CI 里取 fixtures / schema 时钉在 tag 上：
 
 ```bash
-git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 或加成 submodule（submodule 天然钉在 commit 上，最省心）：
@@ -152,6 +152,7 @@ python3 tools/check_contract.py version
 
 | tag | 状态行 |
 | --- | --- |
+| `v1.13` | **服务端在调用方断开后停下（§5.4）、新增传输终态 `canceled`（§4.4）、429 的错误码改为 `-32029`（§3.2 / §5.5）。**这是一次 §6 契约变更：新增 `schema/terminal-event.schema.json` 和 `fixtures/terminal-event/` 五个用例（F 组有了 fixture）；服务端实现三处，调用方不改代码，只改 pin 并补消费用例 |
 | `v1.12` | **§4.4 的最后一步：`execution_status` 由可选提级为 `required`**——七条缺口到这一版才是真的全关。**这是一次 §6 契约变更**，两侧必须跟着动。十五份 fixture 补了该字段；**`dp-trust-01` 故意不补并由 C 组改判 B 组**，它从「缺字段会被静默推导」的样本变成「缺字段会被挡住」的反例（v1.9 的 C 组设计与它自己定的关闭判据在这一点上是打架的，本版做了取舍，理由见附录 A）。六个既有反例逐条重验过拒绝理由没被污染，`tools/check_contract.py` 新增两条断言守这件事 |
 | `v1.11` | **契约面与 v1.10 逐字节相同**，只补一个自洽的版本号：tag `v1.10` 里 `contract_version` 停在 `v1.9`（三笔补正落在打 tag 之后），下游钉它会红一条版本断言。`v1.10` 已推送不能移动，所以补 tag 不移 tag。两侧 pin 由 `v1.8` 直接改到这里。<br>**⚠️ 这个 tag 里写着「七条缺口全部关闭」，实为六条**——§4.4 的机器判据（`execution_status` 提级为 `required`）当时没达成。2026-05-06 在 `main` 上就地更正，**v1.12 把那一步做掉了**。本 tag 的契约面本身没问题，但要「七条全关」请钉 `v1.12` |
 | `v1.10` | 七条缺口全部关闭；**判据是降级的**——原计划「两侧 CI 在 GitHub 上绿一次」一次都没发生（账号级 `Actions has been disabled for this user`），实际判据是「提交可推送复核 + 本机按 CI 入口复现全绿」。**⚠️ 这个 tag 的 `contract_version` 停在 `v1.9`，不要钉它，钉 `v1.11`** |

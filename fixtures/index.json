@@ -1,7 +1,7 @@
 {
   "$comment": "跨仓库 golden fixtures 的清单。两侧 CI 都读这个文件，不要各自维护一份用例表——用例表分叉就是副本漂移的老毛病换个地方复发。字段含义见 fixtures/README.md 与 CONSUMER-TESTS.md。",
   "contract": "a2a-streaming-contract.md",
-  "contract_version": "v1.12",
+  "contract_version": "v1.13",
   "cases": [
     {"id": "dp-valid-01", "group": "A", "file": "data-part/valid/01-success-single-step.json",
      "schema": "schema/artifact-data-part.schema.json", "expect": "valid",
@@ -118,6 +118,21 @@
 
     {"id": "pe-bad-05", "group": "E", "file": "progress-event/schema-invalid/05-metadata-carries-post-hoc-field.json",
      "schema": "schema/progress-event.schema.json", "expect": "invalid", "trust": "n/a",
-     "why": "把 route/confidence 塞进了进度事件。它们要到 stage 结束才有值——出现即说明服务端把事后信息当成了事前信息（§4.5 的诚实说明）"}
+     "why": "把 route/confidence 塞进了进度事件。它们要到 stage 结束才有值——出现即说明服务端把事后信息当成了事前信息（§4.5 的诚实说明）"},
+    {"id": "te-valid-01", "group": "F", "file": "terminal-event/valid/01-completed.json",
+     "schema": "schema/terminal-event.schema.json", "expect": "valid", "trust": "n/a",
+     "why": "载荷完整送达（§4.4）。只有这一种终态算成功（§5.1），而且它不表示查询成功——业务终态在 data part 里"},
+    {"id": "te-valid-02", "group": "F", "file": "terminal-event/valid/02-failed.json",
+     "schema": "schema/terminal-event.schema.json", "expect": "valid", "trust": "n/a",
+     "why": "没有可用载荷：pipeline 抛异常、准入被拒、流中途出错（§4.4 / §5.2），metadata.error 说明原因"},
+    {"id": "te-valid-03", "group": "F", "file": "terminal-event/valid/03-canceled.json",
+     "schema": "schema/terminal-event.schema.json", "expect": "valid", "trust": "n/a",
+     "why": "v1.13 新增：流打开期间被本连接以外的途径取消（服务端取消接口、运维、关停）。调用方按 §5.1 回落，和 failed 走同一条路"},
+    {"id": "te-bad-01", "group": "F", "file": "terminal-event/schema-invalid/01-unknown-state.json",
+     "schema": "schema/terminal-event.schema.json", "expect": "invalid", "trust": "n/a",
+     "why": "state=cancelled（多一个 l）。metadata.error 里的 cancelled: 是取消原因的写法，state 只能用 A2A 规范的 canceled——两个拼写挨在一起，最容易抄错"},
+    {"id": "te-bad-02", "group": "F", "file": "terminal-event/schema-invalid/02-final-false.json",
+     "schema": "schema/terminal-event.schema.json", "expect": "invalid", "trust": "n/a",
+     "why": "终态事件 final=false。调用方靠 final:true 认出最后一条（§4.2），final=false 的 completed 会让它一直等到超时"}
   ]
 }

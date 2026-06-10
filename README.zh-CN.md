@@ -81,7 +81,7 @@
 在实现仓库根目录执行：
 
 ```bash
-git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract
 export A2A_CONTRACT_DIR="$PWD/.contract"
 export A2A_CONTRACT_REQUIRED=1
 ```
@@ -136,6 +136,6 @@ python3 -m venv .venv
 
 | tag | 变更 |
 | --- | --- |
-| `v1.12` | `execution_status` 提级为必填；两侧同步升级，缺字段的载荷由 schema 拒绝 |
+| `v1.13` | 调用方断开后服务端在下一个检查点停下；新增传输终态 `canceled`，并补上终态的 schema 和用例；限流类 429 的错误码由 `-32001` 改为 `-32029`。调用方不改代码，只改 pin 和测试 |
 
 完整历史见[版本记录](docs/maintenance.md#版本)。本次 README 与图表整理不改变契约版本、schema、fixtures 或下游依赖的固定路径。

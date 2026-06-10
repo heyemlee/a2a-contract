@@ -82,7 +82,7 @@ Exact versions live in the application manifests: [Helpdesk backend](https://git
 From an application repository root:
 
 ```bash
-git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract
 export A2A_CONTRACT_DIR="$PWD/.contract"
 export A2A_CONTRACT_REQUIRED=1
 ```
@@ -139,6 +139,6 @@ The detailed contract and operational guides currently remain in Chinese. The En
 
 | Tag | Change |
 | --- | --- |
-| `v1.12` | Makes `execution_status` required; both consumers upgrade together, and the schema rejects payloads missing this field |
+| `v1.13` | The server stops at the next checkpoint once a caller disconnects; adds the `canceled` terminal state with a terminal-event schema and fixtures; rate limits answer 429 with JSON-RPC `-32029` instead of `-32001`. The caller changes no code, only its pins and tests |
 
 See the [version history — Chinese](docs/maintenance.md#版本). README and diagram updates do not change the contract version, schemas, fixtures or stable paths used by consumers.

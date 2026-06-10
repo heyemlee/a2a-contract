@@ -118,6 +118,18 @@ def check_schemas() -> None:
     else:
         ok("execution_status ∈ required ⇒ **§4.4 缺口已关闭**（v1.12 提级，走的 §6）")
 
+    # v1.13：§4.4 的传输终态由两种变成三种。新增的 canceled 必须真的在 schema 里，
+    # 而且拼写跟 A2A 规范走——metadata.error 里写的 `cancelled:` 是取消原因，不是取值。
+    te = json.loads(
+        (SCHEMA_DIR / "terminal-event.schema.json").read_text(encoding="utf-8")
+    )
+    states = set(te["$defs"]["terminalState"]["enum"])
+    if states != {"completed", "failed", "canceled"}:
+        fail(f"terminal-event.schema.json: 传输终态应为 completed / failed / canceled，"
+             f"实为 {sorted(states)}")
+    else:
+        ok("传输终态 = completed / failed / canceled ⇒ **§4.4 的 canceled 已进 schema**（v1.13）")
+
     db = json.loads((SCHEMA_DIR / "database-id.schema.json").read_text(encoding="utf-8"))
     current = set(db["$defs"]["current-2026-09-04"]["enum"])
     retired = set(db["$defs"]["retired-v1.6"]["enum"])
@@ -210,7 +222,8 @@ def check_fixtures() -> None:
     ok("反例的拒绝理由未被 execution_status 提级污染（dp-trust-01 除外，那正是它的职责）")
 
     groups = {c["group"] for c in manifest["cases"]}
-    for required in ("A", "B", "C", "D", "E"):
+    # F 组 v1.13 起有了 fixture（终态信封）；它的顺序类断言仍要一整条流，见 CONSUMER-TESTS.md
+    for required in ("A", "B", "C", "D", "E", "F"):
         if required not in groups:
             fail(f"CONSUMER-TESTS.md 定义了 {required} 组，清单里一个用例都没有")
 

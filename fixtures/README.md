@@ -11,6 +11,8 @@
 | `data-part/trust-negative/` | **schema 通过、但业务上不可作出处**的载荷 |
 | `progress-event/valid/` | progress 事件信封正例 |
 | `progress-event/schema-invalid/` | **必须被拒绝**的信封 |
+| `terminal-event/valid/` | 终态事件信封正例：`completed` / `failed` / `canceled`（v1.13 新增） |
+| `terminal-event/schema-invalid/` | **必须被拒绝**的终态信封（v1.13 新增） |
 
 `trust-negative` 与 `schema-invalid` 分开是有意的，这是本目录最重要的一条结构：
 

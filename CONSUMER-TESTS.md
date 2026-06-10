@@ -1,6 +1,6 @@
 # 两侧 CI 必须跑的契约用例
 
-> 配套：`a2a-streaming-contract.md`（v1.12）、`schema/`、`fixtures/`。
+> 配套：`a2a-streaming-contract.md`（v1.13）、`schema/`、`fixtures/`。
 > 本文只说**跑什么、断言什么**，不规定用什么测试框架。
 >
 > 上面这个版本号由 `tools/check_contract.py version` 与契约状态行比对。
@@ -51,7 +51,7 @@ v1.2 虚报、v1.3 推翻、v1.4 的证据表证错了东西——三次都不�
 | **C** | 信任反例（schema 通过但不可作出处） | 必跑 | 必跑 |
 | **D** | `database` 标识符 | 必跑 | 必跑 |
 | **E** | progress 事件信封 | 必跑 | 必跑 |
-| **F** | 事件顺序与终态（§4.2 / §5.1） | 必跑 | 必跑 |
+| **F** | 事件顺序与终态（§4.2 / §5.1）；v1.13 起终态信封有 fixture | 必跑 | 必跑 |
 
 ### A 组：data part 正例
 
@@ -211,7 +211,24 @@ schema 拦不住，只能靠业务判据。
 
 ### F 组：事件顺序与终态
 
-fixture 覆盖不到（要一整条流），两侧各自用自己的测试替身构造。
+**终态信封（v1.13 起有 fixture）：** `fixtures/terminal-event/` 下五个用例，过 `schema/terminal-event.schema.json`。
+三个正例是 `completed` / `failed` / `canceled`；两个反例分别是 `state: "cancelled"`（多一个 l——`metadata.error`
+里取消原因的写法，不是取值）和终态 `final: false`。
+
+**顺序类断言**仍然 fixture 覆盖不到（要一整条流），两侧各自用自己的测试替身构造，见下表。
+
+**服务端额外断言（v1.13）：**
+
+- 发出去的终态帧（`completed` / `failed` / `canceled` 三种都造一次）过 `schema/terminal-event.schema.json`；
+- 经服务端取消接口取消一条还开着的流，终态是 `canceled`，`metadata.error` 形如 `cancelled: api`，之前不发 `artifact-update`；
+- `message/send` 被取消时，返回的 Task `status.state` 是 `canceled`；
+- 调用方断开后，run 在下一个检查点被取消（§5.4）；
+- 限流、配额、流式准入满了：429 + JSON-RPC `-32029` + `Retry-After`，在流打开之前（§3.2 / §5.5）。
+
+**调用方额外断言（v1.13）：**
+
+- 流式终态 `canceled` → 判失败、回落（§5.1）；
+- `message/send` 返回的 Task 是 `canceled` → 判失败、回落。
 
 | 断言 | 出处 |
 | --- | --- |
@@ -219,6 +236,7 @@ fixture 覆盖不到（要一整条流），两侧各自用自己的测试替身
 | 终态事件**有且只有一个**，且是最后一个 | §4.2 |
 | `artifact-update` 在终态之前 | §4.2 |
 | 流中途出错时**补一个 `failed` 终态**再关，不靠断连表示失败 | §5.2 |
+| 终态是 `canceled` → **判失败**（v1.13） | §4.4 / §5.1 |
 | 只收到 `artifact-update`、没收到终态 → **判失败** | §5.1 |
 | 流正常结束但没有终态 → **判失败** | §5.1 |
 | 响应 `Content-Type` 是 `application/json` → 按错误处理，**不进 SSE 解析循环** | §3.2 |
@@ -244,7 +262,7 @@ python3 tools/check_contract.py
 引用时钉在 tag 上，不要跟 `main`：
 
 ```bash
-git clone --depth 1 --branch v1.12 https://github.com/heyemlee/a2a-contract.git .contract
+git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract
 ```
 
 ## 这份文件没有覆盖什么
