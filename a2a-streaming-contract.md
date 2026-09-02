@@ -333,13 +333,14 @@
 >
 > 判据是**服务端流式真的上线并承接流量**，不是"服务端实现完了"——
 > 实现完成 ≠ 上线，中间还隔着部署。**今天是第二档**
-> （`ai-helpdesk/backend/tools/sql_agent_client.py:152`，`SQL_AGENT_TRANSPORT` 默认 `query`）。
+> （ai-helpdesk `cd2bf20`：`backend/app/tools/sql_agent_client.py:188`，`SQL_AGENT_TRANSPORT` 默认 `query`）。
 >
 > #### 外层工具超时必须严格大于 send 预算（v1.6 新增）
 >
 > 上表最后一列是 v1.6 补的，因为它是一个**会让切档静默失效**的坑：
-> 调用方在 A2A 客户端之外还有一层工具超时（`ai-helpdesk/backend/api/main.py:334`，
-> 今天 **47s**）。两个值的关系决定了超时由谁先判：
+> 调用方在 A2A 客户端之外还有一层工具超时（ai-helpdesk `cd2bf20`：`backend/app/api/main.py:428`，
+> 算式在 `backend/app/core/preflight.py:193-195`：`SQL_AGENT_TIMEOUT_S` + 2s，今天 **47s**）。
+> 两个值的关系决定了超时由谁先判：
 >
 > - **外层 > send**：send 先超时，抛出的是 A2A 的错误，调用方知道是"下游没答完"，
 >   可以按 §5 回落。今天 47 > 45，顺序是对的。
@@ -353,14 +354,14 @@
 > **v1.5 把这条记为缺口并列了两个选项（补档 / 改回 25s），v1.6 选了补档。
 > 上表已是三档，下面保留当时的分析，因为它就是这个决定的理由。**
 >
-> `send_timeout_s` 默认 **45s**（`ai-helpdesk/backend/tools/a2a_client.py:80`；
-> env `SQL_AGENT_A2A_SEND_TIMEOUT_S` 默认也是 `"45"`，见 `:273-274`，
+> `send_timeout_s` 默认 **45s**（ai-helpdesk `cd2bf20`：`backend/app/tools/a2a_client.py:96`；
+> env `SQL_AGENT_A2A_SEND_TIMEOUT_S` 默认也是 `"45"`，见 `:290-291`，
 > 注释自承「上线后改 90」——没改）。**45 既不是上线前该有的 25，也不是上线后该有的 90。**
 >
 > 两件事要分开看，不要笼统说成"违约"：
 >
 > 1. **上线判据这一侧，契约对、代码也没违约。** `SQL_AGENT_TRANSPORT` 默认仍是 `query`
->    （`ai-helpdesk/backend/tools/sql_agent_client.py:152`），流式还没承接流量，
+>    （ai-helpdesk `cd2bf20`：`backend/app/tools/sql_agent_client.py:188`），流式还没承接流量，
 >    所以现在**本来就不该**是 90s。
 > 2. **但上表说这个阶段是 25s，代码是 45s。** 差额不是笔误：25s 是旧值，
 >    45s 是实现时按 p90 17.7s（§2）自己放宽的。真正缺的是一档状态——
