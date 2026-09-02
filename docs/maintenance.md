@@ -141,12 +141,15 @@ python3 tools/check_contract.py version
 就等于没有一个地方知道判据的全集，v1.10 那次漂移漏掉的正是当时写在 workflow 里
 那段 bash 没覆盖的两处。
 
-**但这条 workflow 在 GitHub 上一次都没跑过。** 三个仓库的 Actions 都是账号级停用
-（`Actions has been disabled for this user`，run 数全是 0，仓库里改不动），
-所以它今天拦不住任何东西——带着红的提交照样能合、照样能打 tag。
-**在 Actions 恢复之前，真正的门禁只有一道：合 `main` 之前、打 tag 之前，本机把
+**这条 workflow 现在在 GitHub 上会跑，但它拦不住任何东西。** 推送 `main`
+和推 tag 都会触发；可 `main`
+没有分支保护、ruleset 为空，提交直接推上去，CI 在推送之后才跑——红了也已经在 `main` 上，
+打 tag 也不等它。**所以真正的门禁仍然只有一道：合 `main` 之前、打 tag 之前，本机把
 `python3 tools/check_contract.py` 跑到全绿。** 不要在任何地方写"CI 会拦住"。
-详情与查证过程见契约状态行下方的降级声明。
+
+> CI 恢复之前这里写的是「**这条 workflow 在 GitHub 上一次都没跑过**」：2026-05-05 查证时
+> 三个仓库的 Actions 都是账号级停用（`Actions has been disabled for this user`，run 数全是 0，
+> 仓库里改不动）。查证过程见契约状态行下方的降级声明。
 
 ## 版本
 
