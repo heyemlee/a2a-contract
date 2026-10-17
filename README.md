@@ -2,143 +2,133 @@
 
 # A2A Contract
 
+**A versioned, machine-checked contract between a support agent and a data agent.**
+
+It defines how AI Helpdesk delegates a data question to AI SQL Agent over A2A, how each stage streams back over SSE, and when the result may back an answer: one protocol document, five JSON Schemas, 30 golden fixtures and a self-check, pinned by tag in both agents' CI.
+
+[![Contract](https://img.shields.io/badge/Contract-v1.13-6E56CF?style=flat-square)](a2a-streaming-contract.md)
+[![A2A](https://img.shields.io/badge/A2A_0.2-JSON--RPC_2.0_%2B_SSE-0D9488?style=flat-square)](docs/a2a-integration.md)
+[![JSON Schema](https://img.shields.io/badge/JSON_Schema-2020--12-0A7CFF?style=flat-square)](schema/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](tools/check_contract.py)
+[![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white)](https://github.com/heyemlee/a2a-contract/actions/workflows/contract.yml)
+
 **English** · [简体中文](README.zh-CN.md)
 
-**One shared contract for a support agent and a data agent.**
-
-Business questions → Controlled queries → Streaming progress → Verifiable results
-
-
-[![Contract](https://img.shields.io/badge/Contract-v1.12-0891b2?style=flat-square)](a2a-streaming-contract.md) [![Transport](https://img.shields.io/badge/Transport-JSON--RPC_2.0_%2B_SSE-475569?style=flat-square)](#how-the-projects-work-together) [![Schema](https://img.shields.io/badge/Schema-JSON_Schema_2020--12-7c3aed?style=flat-square)](schema/)
-
-[Interaction](#how-the-projects-work-together) · [Tech stack](#tech-stack-and-responsibilities) · [Design](#key-design-decisions) · [Integration](#quick-start) · [Validation](#validation-and-current-limits)
+[Highlights](#highlights) · [Architecture](#architecture) · [Tech stack](#tech-stack) · [Features](#features) · [Integrate](#integrate)
 
 </div>
 
-When a customer asks “Where is my order?”, the support agent must decide when to query business data, show progress while waiting, and determine whether the result supports an answer. This repository defines that service boundary: **how requests are sent, how events are consumed, how results are trusted, and how both sides upgrade together**.
+<p align="center">
+  <img src="docs/screenshots/delegation.webp" width="960" alt="An order-status question in the AI Helpdesk console is delegated to the SQL agent over A2A. On the left, the console lists the SQL agent's stages as they arrive (finding tables, planning, a query for each of two databases, a repair) and then answers, and Learning mode says the result passed verification and was used as evidence. On the right, the same turn's A2A frames arrive in order: the Agent Card, POST /a2a with message/stream, a task, a status update for each stage including two the console does not show, the artifact whose data part reads execution_status success, no risk and not degraded, and a final completed event, ending with the trust check's verdict that the result can be used as evidence" />
+</p>
 
-| Repository | Role | Core capabilities |
-| --- | --- | --- |
-| [AI Helpdesk](https://github.com/heyemlee/ai-helpdesk) | Support orchestration · A2A client | Intent recognition, hybrid retrieval, specialist routing, answer guards and human tickets |
-| [AI SQL Agent](https://github.com/heyemlee/ai-sql-agent) | Data queries · A2A server | Schema retrieval, cross-database planning, SQL generation, authorization, read-only execution and result checks |
-| **A2A Contract** | Shared interface contract | Protocol documentation, JSON Schema, golden fixtures and consumer test requirements |
+<p align="center"><sub>A made-up order on a mocked API. The frames on the right are replayed from the same mock and validate against this repository's schemas.</sub></p>
 
-The applications run independently. Both test suites reference this repository as a versioned dependency; no separate “contract service” needs to be deployed.
+## Highlights
 
-## How the projects work together
+- **One payload, three transports.** `message/stream` (JSON-RPC 2.0 over SSE), `message/send` and plain `POST /query` carry the same data part, with 7 required fields and one set of trust rules, so a fallback or a rollback never changes what counts as evidence.
+- **Delivered is not succeeded.** `completed` only says the payload arrived; `execution_status` (5 values) says whether the query ran, and risk, degradation or truncation can still rule a result out. A missing or mistyped field counts against it: `"false"` is not a boolean.
+- **Checked by machine.** 5 JSON Schemas (Draft 2020-12) and 30 golden fixtures in 6 groups, 7 of them schema-valid but not plain evidence. `tools/check_contract.py` proves each negative fixture is rejected, each link and `§` reference resolves, and the version agrees in all 5 places; GitHub Actions runs it on every push to `main`, pull request and tag.
+- **Timeouts set from measurements.** In 82 audited model calls, database queries averaged 17.7 s and the slowest took 68.3 s, so the client gives up after 20 s of silence or 90 s in total, and progress events are the heartbeat. A cancelled run stops at its next checkpoint: 0.07–2.7 s in 6 measured cancels.
+- **Released like a public API.** Both agents pin `v1.13` in CI and fail rather than skip without it. A released tag's contract never changes: `v1.11` exists only to fix the version string `v1.10` shipped with.
 
-![A2A request sequence between AI Helpdesk and AI SQL Agent](docs/diagrams/a2a-sequence.en.svg)
+## Architecture
 
-[Interactive HTML](docs/diagrams/a2a-sequence.en.html) · [Editable JSON](docs/diagrams/a2a-sequence.en.archify.json) · [Integration details and source evidence — Chinese](docs/a2a-integration.md)
+<p align="center">
+  <img src="docs/architecture.svg" width="960" alt="A2A Contract architecture: ai-helpdesk, the support agent, reads ai-sql-agent's Agent Card and calls POST /a2a with message/stream. While the SQL agent's loop calls the model and runs read-only SQL on four databases, it streams back over JSON-RPC 2.0 and SSE a task, a status update for each stage, one artifact with the data part and exactly one final event. The helpdesk's A2A client gives up after 20 s of silence or 90 s in total, judges the data part with assess() and streams progress and the answer to the console. The a2a-contract repository, version 1.13, defines every frame with the contract, five JSON Schemas, 30 golden fixtures and a self-check, and both repositories' CI pin its tag. Pulses travel each connection in that order" />
+</p>
 
-Generated with [Archify](https://github.com/tt-a1i/archify). GitHub displays the SVG directly. Download and open the HTML in a browser to zoom, inspect nodes, switch themes and export.
+[AI Helpdesk](https://github.com/heyemlee/ai-helpdesk) runs the conversation, [AI SQL Agent](https://github.com/heyemlee/ai-sql-agent) queries business data, and this repository defines the interface between them; nothing here is deployed. For an order question, the helpdesk reads the Agent Card and opens `message/stream`. The SQL agent streams a status update per stage while its loop calls the model and runs read-only SQL, then one artifact and one final event, and the helpdesk judges the data part before a specialist may use it. Knowledge questions never leave the helpdesk. Blue marks requests and data, teal protocol events, orange model calls, violet the contract.
 
-**The diagram shows a successful request with A2A streaming enabled. Helpdesk still defaults to `POST /query`; switching the transport is explicit.** A query may involve multiple databases and progress events, condensed here into one logical interaction.
+- **No keep-alive frames.** The client drops a stream after 20 s without an event, and every event the server sends is a real stage change, so a stalled query dies at 20 s instead of being pinged along to the 90 s cap.
+- **Fall back only before the stream opens.** A `-32004` before the stream opens has cost nothing, so the client may resend with `message/send`. After that, a failure ends the call: resending would run the query twice and charge the quota twice.
 
-1. **Recognize and delegate.** Helpdesk determines whether the question needs business data and delegates through the `order_data_query` tool. Knowledge questions can use the knowledge base directly.
-2. **Discover capabilities.** The client reads `/.well-known/agent.json` and selects `message/stream` or `message/send` based on `capabilities.streaming`.
-3. **Execute with controls.** SQL Agent retrieves the business schema, plans the query, generates SQL and executes it under authorization and read-only constraints. Helpdesk forwards query stages to the console as SSE `progress` events.
-4. **Verify and answer.** After receiving both the artifact and a `completed + final:true` terminal event, the client evaluates execution status, risk and degradation fields. Helpdesk uses that evidence to answer, fall back or hand off to a human.
+## Tech stack
 
-| Transport | Purpose | Response |
-| --- | --- | --- |
-| `POST /query` | Current default, direct request | JSON response with the same result trust semantics |
-| `POST /a2a` · `message/send` | A2A path when streaming is unavailable | JSON-RPC Task containing a result artifact |
-| `POST /a2a` · `message/stream` | Visible query progress | JSON-RPC over SSE: task, progress, artifact, then terminal event |
+| Layer            | Technology                                         | Role                                                                                                |
+| ---------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Protocol         | A2A 0.2 subset · JSON-RPC 2.0 · Server-Sent Events | `message/stream` and `message/send` on `POST /a2a`; `task`, `status-update`, `artifact-update` events |
+| Discovery        | Agent Card                                         | Served at `/.well-known/agent.json`; `capabilities.streaming` picks stream or send; cached 30 s      |
+| Contract surface | JSON Schema Draft 2020-12                          | Data part, progress event, terminal event, stage names, the `*_db` identifier pattern               |
+| Shared samples   | Golden fixtures · `fixtures/index.json`            | 30 payloads, each with its expected schema verdict, trust verdict and reason                        |
+| Self-check       | Python 3.12 · jsonschema · referencing             | Schemas, fixtures, links and `§` references, version consistency                                    |
+| CI               | GitHub Actions                                     | Runs the self-check here; both agents run the fixtures in their own CI against the pinned tag       |
+| A2A client       | AI Helpdesk · FastAPI · httpx                      | Streams the call, enforces the 20 s and 90 s limits, one `assess()` for all three transports        |
+| A2A server       | AI SQL Agent · FastAPI                             | Emits the stages, the data part and one terminal event; cancels a run when the caller disconnects   |
 
-## Tech stack and responsibilities
+## Features
 
-| Layer | Technology | Role in the system |
-| --- | --- | --- |
-| Support console | React 18 · TypeScript 5 · Vite 6 · Tailwind CSS 4 · TanStack Query 5 | Conversations, progress, tickets and operational views; POST SSE consumed through `fetch` |
-| Services and orchestration | Python · FastAPI · Pydantic 2 · asyncio | Typed requests, async I/O and support specialist orchestration; SQL Agent has its own query pipeline |
-| Support knowledge retrieval | PostgreSQL + pgvector · tsvector · RRF · reranking | Fuse semantic and exact-term retrieval, then assess ranking and evidence sufficiency |
-| Query reasoning | YAML business semantics · BM25 + vector retrieval · SchemaGraph | Narrow the schema context, represent table relationships and plan cross-database steps with intermediate results |
-| Query execution and controls | SQLGlot AST · MCP execution layer · SQLite / PostgreSQL | Table/column authorization, SQL validation, read-only execution, timeouts, row caps and repair |
-| Model integration | Anthropic / OpenAI-compatible protocols · HTTPX | Intent recognition, answers and SQL generation; the model protocol is not an authorization boundary |
-| State and observability | Redis · SQLite / PostgreSQL · OpenTelemetry · Prometheus · Grafana / Tempo / Loki | Helpdesk manages transient state and the monitoring stack; both services record queries, steps and correlation identifiers |
-| Cross-service protocol | HTTP · JSON-RPC 2.0 · SSE · JSON Schema | Separate requests, events, result structure and business trust across transports |
-| Contract validation | Python · jsonschema · referencing · pytest | Shared fixtures cover valid, invalid and structurally valid but untrustworthy payloads |
+### Streaming protocol
 
-Exact versions live in the application manifests: [Helpdesk backend](https://github.com/heyemlee/ai-helpdesk/blob/main/backend/requirements.txt), [frontend](https://github.com/heyemlee/ai-helpdesk/blob/main/frontend/package.json), and [SQL Agent](https://github.com/heyemlee/ai-sql-agent/blob/main/pyproject.toml). This table describes the whole system; this contract repository only needs Python, `jsonschema` and `referencing` for its self-check.
+- **Guaranteed order.** One `task`, any number of `status-update`s, one `artifact-update`, then exactly one terminal event: `completed`, `failed` or `canceled`.
+- **Stages are the contract.** 9 fixed stage names, whatever the server calls them inside. `repair` comes at most once per step and steps only increase, so a repeated `repair` is a server bug the client can see.
+- **Errors before the stream.** Bad keys get JSON `-32600`, rate limits and quotas 429 with `Retry-After` and `-32029`, a disabled stream `-32004`, all before any event. One `trace_id` comes back in the response header and every event.
 
-## Key design decisions
+| Measured                                                  | Result                              |
+| --------------------------------------------------------- | ----------------------------------- |
+| Database queries, 7 of 82 audited model calls             | 17.7 s on average                   |
+| All 82 calls                                              | p50 6.6 s · p90 17.7 s · max 68.3 s |
+| Longest gap between two server events, one end-to-end run | 9.5 s, under the 20 s silence limit |
+| From cancel to stop, 6 runs on a real model               | 0.07–2.7 s                          |
 
-| Design | Rule | Problem addressed |
-| --- | --- | --- |
-| **Separate protocol completion from business success** | An artifact alone is insufficient; a completed terminal event is also required. Business logic then evaluates `execution_status` | Interrupted streams, partial results and failed queries must not become complete answers |
-| **Conservative trust assessment** | Missing or mistyped `has_risk` / `degraded` fields are untrusted; the string `"false"` is not accepted as a boolean | Loose coercion must not turn malformed data into trusted facts |
-| **Shared semantics across three transports** | Normalized results from `stream`, `send` and `/query` use the same trust rules | Changing transport must not silently change the evidence standard |
-| **Bounded fallback** | Unsupported streaming or pre-stream `-32004` can fall back to `send`; failures after the stream opens are not replayed | Avoid duplicate execution, quota charges and accumulated waiting time |
-| **Layered timeouts** | Streaming defaults to 20 seconds of silence and a 90-second hard cap; configure the outer tool budget accordingly | Distinguish a slow query making progress from a stalled call |
-| **Verifiable evolution** | Pin a tag or commit, share schemas and fixtures, and update both consumers when the contract changes | Prevent one service from interpreting new results through an old contract |
+Recorded in the contract (§2, §5.4 and its status notes). The whole exchange is also a [sequence diagram](docs/diagrams/a2a-sequence.en.svg), with an [interactive version](docs/diagrams/a2a-sequence.en.html).
 
-`execution_status` distinguishes `success`, `partial_success`, `no_data`, `failed` and `not_applicable`. A successful query with no records needs a different answer from a query that never succeeded. Truncated results cannot support claims about totals or complete aggregates. See the [authoritative contract — Chinese](a2a-streaming-contract.md) for the full rules.
+### Result trust
 
-## Quick start
+- **Five outcomes.** `execution_status` is `success`, `partial_success`, `no_data`, `failed` or `not_applicable`: "found nothing" and "never ran" need different answers.
+- **What may back an answer.** `completed`, a `success` or `partial_success` status, and `has_risk` and `degraded` both false. A partial result supports only its successful steps; a truncated one rules out totals and counts.
+- **Missing means untrusted.** A missing `has_risk` or `degraded` counts as true and a missing `queried_database` as false; without `as_of`, no date is claimed.
 
-### 1. Pin the contract
+### Golden fixtures and consumer tests
 
-From an application repository root:
+| Group | What it pins down                                                                       | Fixtures |
+| ----- | --------------------------------------------------------------------------------------- | -------: |
+| A     | Valid data parts, identical on all three transports                                     |        3 |
+| B     | Schema rejects: missing trust fields, `"false"` strings, contradictions                 |        6 |
+| C     | Schema-valid but not plain evidence: failed, partial, risky, replayed, truncated, empty |        6 |
+| D     | Database identifiers: unknown but well-formed is accepted, malformed is rejected        |        2 |
+| E     | Progress-event envelopes                                                                |        8 |
+| F     | Terminal events; ordering is asserted on whole streams                                  |        5 |
 
-```bash
-git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract
-export A2A_CONTRACT_DIR="$PWD/.contract"
-export A2A_CONTRACT_REQUIRED=1
-```
+- Each fixture is the raw payload; `fixtures/index.json` records its expected schema and trust verdicts and why it exists.
+- Both agents read the same files at the pinned tag, never a copy, since copies drift.
+- A and B must pass together: rejecting everything passes B and fails A. What each side asserts: [CONSUMER-TESTS.md](CONSUMER-TESTS.md) (in Chinese).
 
-Both consumers read the same `schema/` and `fixtures/index.json`. Do not copy them into the application repositories or depend on a moving `main`. If `.contract` already exists, follow the [upgrade procedure — Chinese](docs/maintenance.md#升版本的时候).
+### Boundaries
 
-### 2. Enable A2A collaboration
+- **A2A 0.2, a subset.** The Agent Card says `0.2`. A2A 1.0 dropped the `kind` field these events are built on, so moving up is a major contract change, not a new version string.
+- **No answer deltas, ever.** Delegated text reaches users only through the helpdesk's own model and sentence guard; streaming it raw would bypass the guard.
+- **One service identity.** Sessions stay separate, but what a query can see follows the SQL agent's service key, not the end user ([identity notes](https://github.com/heyemlee/ai-helpdesk/blob/main/docs/integrations/sql-agent-identity-requirements.md)).
 
-Example Helpdesk backend environment when both services run locally:
-
-```dotenv
-SQL_AGENT_URL=http://127.0.0.1:8000
-SQL_AGENT_TRANSPORT=a2a
-SQL_AGENT_TIMEOUT_S=90
-SQL_AGENT_A2A_SEND_TIMEOUT_S=45
-SQL_AGENT_A2A_SILENCE_S=20
-SQL_AGENT_A2A_HARD_S=90
-```
-
-Set `AI_SQL_A2A_STREAMING=true` in SQL Agent. If API key authentication is enabled, configure the matching `SQL_AGENT_API_KEY` in Helpdesk. Start each application using its own README. Container deployments need a service address reachable from the calling container.
-
-Here, `SQL_AGENT_TIMEOUT_S=90` gives the outer tool a 92-second budget, covering the 90-second streaming cap while keeping `send` at 45 seconds. Changing only the transport leaves the default 47-second outer budget in place and can cut streaming requests short. See the [timeout and integration guide — Chinese](docs/a2a-integration.md).
-
-## Validation and current limits
-
-Run in this repository:
+## Integrate
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install jsonschema referencing
-.venv/bin/python tools/check_contract.py
+git clone --depth 1 --branch v1.13 https://github.com/heyemlee/a2a-contract.git .contract  # never main
+export A2A_CONTRACT_DIR="$PWD/.contract"  # where both agents' contract tests look first
+export A2A_CONTRACT_REQUIRED=1            # fail instead of skipping when the contract is missing
 ```
 
-The self-check covers **schemas, fixtures, links and version consistency**. Both applications must also implement the [six consumer test groups, A–F — Chinese](CONSUMER-TESTS.md). Negative cases must check both schema rejection and whether the caller falls back toward an untrusted verdict.
+To switch the agents to A2A, set `SQL_AGENT_TRANSPORT=a2a` (the default is `POST /query`) and `SQL_AGENT_TIMEOUT_S=90` in AI Helpdesk, plus `SQL_AGENT_API_KEY` if the SQL agent requires a key; streaming is on by default in AI SQL Agent. Budgets and fallbacks: [docs/a2a-integration.md](docs/a2a-integration.md) (in Chinese).
 
-- **Validation status.** Historical acceptance relies on local checks and verifiable commits. On 2026-06-03, this repository still had zero GitHub Actions runs; an existing workflow is not evidence of an enforced CI gate. Historical account restrictions and the local fallback process are documented in the [maintenance guide — Chinese](docs/maintenance.md#自检).
-- **Identity boundary.** Helpdesk isolates user memory and downstream sessions, but queries business data under a shared service identity by default. Data visibility follows the service key's policy, not end-user business-data isolation. See the [Helpdesk identity integration requirements — Chinese](https://github.com/heyemlee/ai-helpdesk/blob/main/docs/integrations/sql-agent-identity-requirements.md).
-- **Accuracy boundary.** A correct protocol does not guarantee correct SQL semantics. SQL Agent's 2026-05-06 evaluation still missed the cross-database accuracy and silent-error release gates; see the [measurement record](https://github.com/heyemlee/ai-sql-agent/blob/main/benchmark/baseline/2026-09-09/README.md).
+## Test
 
-## Documentation
+```bash
+python3 -m venv .venv && .venv/bin/pip install jsonschema referencing  # the self-check's only dependencies
+.venv/bin/python tools/check_contract.py           # schema, fixtures, links and version, as CI runs it
+.venv/bin/python tools/check_contract.py fixtures  # one section: schema, fixtures, links or version
+```
 
-The detailed contract and operational guides currently remain in Chinese. The English and Chinese READMEs reference the same authoritative documents, schemas and fixtures.
+## Release
 
-| Entry | Contents |
-| --- | --- |
-| [Authoritative contract](a2a-streaming-contract.md) | Effective status, event structures, result semantics, failures and bilateral changes |
-| [A2A integration guide](docs/a2a-integration.md) | Transport paths, timeout budgets, identity boundaries and source links pinned to commits |
-| [Consumer tests](CONSUMER-TESTS.md) | Six required test groups for both applications |
-| [Schemas](schema/) · [Fixture index](fixtures/index.json) | Executable structural constraints and shared samples |
-| [Maintenance and releases](docs/maintenance.md) | Stable paths, upgrade order, version history and incident lessons |
-| [Diagram provenance](docs/diagrams/README.md) | Archify version, generation commands and validation records |
+```bash
+.venv/bin/python tools/check_contract.py version  # every place that states the version must agree
+git tag vX.Y && git push origin vX.Y              # the last step: a released tag's contract never changes
+```
 
-## Current version
+A contract change is bilateral: both agents move their pins (2 places in AI SQL Agent, 3 in AI Helpdesk) and add the new cases. Procedure and history: [docs/maintenance.md](docs/maintenance.md#版本) (in Chinese).
 
-| Tag | Change |
-| --- | --- |
-| `v1.13` | The server stops at the next checkpoint once a caller disconnects; adds the `canceled` terminal state with a terminal-event schema and fixtures; rate limits answer 429 with JSON-RPC `-32029` instead of `-32001`. The caller changes no code, only its pins and tests |
-
-See the [version history — Chinese](docs/maintenance.md#版本). README and diagram updates do not change the contract version, schemas, fixtures or stable paths used by consumers.
+| Tag     | Change                                                                                                                          |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `v1.13` | A disconnect cancels the run at its next checkpoint; new `canceled` terminal state with a schema and 5 fixtures; 429 uses `-32029` |
+| `v1.12` | `execution_status` becomes required; `dp-trust-01`, which lacks it, moves to group B                                            |
+| `v1.11` | Same contract as `v1.10` with its version string corrected; pin this instead of `v1.10`                                         |
